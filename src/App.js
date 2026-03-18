@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useCallback, useMemo, useRef } from "react";
+import { useState, useEffect, useCallback, useMemo, useRef } from "react";
 
 const TROY = 31.1035;
 const ACCOUNT_OPEN_OZ = 2985.40;
@@ -47,55 +47,66 @@ const fmtOzN = v => v.toLocaleString("en-US",{minimumFractionDigits:4,maximumFra
 const fmtGN  = v => v.toLocaleString("en-US",{minimumFractionDigits:2,maximumFractionDigits:2});
 
 const C = {
-  bg:"#F5F3EE",s1:"#FFFFFF",s2:"#E8E4DC",s3:"#D6D0C4",
-  gold:"#C9981A",goldD:"#A87A10",goldFaint:"rgba(201,152,26,0.10)",goldDim:"rgba(201,152,26,0.30)",
-  t1:"#1A1710",t2:"#5A5343",t3:"#9E9281",green:"#1A7A45",red:"#C0392B",
+  bg:"#F5F3EE", s1:"#FFFFFF", s2:"#E8E4DC", s3:"#D6D0C4",
+  gold:"#C9981A", goldD:"#A87A10",
+  goldFaint:"rgba(201,152,26,0.10)", goldDim:"rgba(201,152,26,0.30)",
+  t1:"#1A1710", t2:"#5A5343", t3:"#9E9281",
+  green:"#1A7A45", red:"#C0392B",
 };
 
-const WORKER = "https://super-meadow-495c.johnmccannwarren.workers.dev/";
-const CL_XAU = "0x214eD9Da11D2fbe465a6fc601a91E62EbeC1a0D6";
+const WORKER  = "https://super-meadow-495c.johnmccannwarren.workers.dev";
+const CL_XAU  = "0x214eD9Da11D2fbe465a6fc601a91E62EbeC1a0D6";
 const POLL_MS = 15000;
 
-async function fetchChainlink() {
-  const res = await fetch(WORKER, {
-    method:"POST",
-    headers:{"Content-Type":"application/json"},
-    body:JSON.stringify({jsonrpc:"2.0",id:1,method:"eth_call",params:[{to:CL_XAU,data:"0xfeaf968c"},"latest"]}),
-    signal:AbortSignal.timeout(8000),
-  });
-  if (!res.ok) throw new Error(`Worker HTTP ${res.status}`);
+async function fetchSpot() {
+  const res = await fetch(`${WORKER}/spot`, { signal: AbortSignal.timeout(8000) });
+  if (!res.ok) throw new Error(`Spot HTTP ${res.status}`);
   const j = await res.json();
-  if (j.error) throw new Error(j.error.message||JSON.stringify(j.error));
-  if (!j.result||j.result==="0x") throw new Error("Empty result");
-  const hex = j.result.startsWith("0x") ? j.result.slice(2) : j.result;
-  const words = [];
-  for (let i=0;i<hex.length;i+=64) words.push(hex.slice(i,i+64));
-  if (words.length<4) throw new Error(`Only ${words.length} words decoded`);
-  const price = parseInt(words[1],16)/1e8;
-  const age   = Math.floor(Date.now()/1000)-parseInt(words[3],16);
-  if (price<1000||price>20000) throw new Error(`Price out of range: ${price}`);
-  return {price:parseFloat(price.toFixed(2)),ageSeconds:age};
+  if (j.error) throw new Error(j.error);
+  if (!j.price || j.price < 1000 || j.price > 20000) throw new Error(`Bad price: ${j.price}`);
+  return { price: parseFloat(j.price.toFixed(2)), chgPct: parseFloat((j.chgPct||0).toFixed(4)) };
 }
 
-function Sparkline({data,hoverIdx,setHoverIdx,positive,cur,rates}) {
-  const ref=useRef(null);
-  const W=390,H=96,pL=2,pR=2,pT=12,pB=4;
-  const iW=W-pL-pR,iH=H-pT-pB;
-  const vals=data.map(d=>d.oz);
-  const mn=Math.min(...vals),mx=Math.max(...vals),rng=mx-mn||1;
-  const cx=i=>pL+(i/(data.length-1))*iW;
-  const cy=v=>pT+iH-((v-mn)/rng)*iH;
-  const line=data.map((d,i)=>`${i===0?"M":"L"}${cx(i).toFixed(1)},${cy(d.oz).toFixed(1)}`).join(" ");
-  const area=line+` L${cx(data.length-1).toFixed(1)},${H} L${cx(0).toFixed(1)},${H} Z`;
-  const hi=hoverIdx??data.length-1;
-  const col=positive?C.gold:C.red;
-  const mxI=vals.indexOf(mx);
-  const getIdx=x=>{
-    const r=ref.current?.getBoundingClientRect();
-    if(!r)return null;
-    return Math.max(0,Math.min(data.length-1,Math.round(((x-r.left)*(W/r.width)-pL)/iW*(data.length-1))));
+async function fetchChainlink() {
+  const res = await fetch(`${WORKER}/`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ jsonrpc:"2.0", id:1, method:"eth_call", params:[{ to:CL_XAU, data:"0xfeaf968c" },"latest"] }),
+    signal: AbortSignal.timeout(10000),
+  });
+  if (!res.ok) throw new Error(`Chainlink HTTP ${res.status}`);
+  const j = await res.json();
+  if (j.error) throw new Error(j.error.message || JSON.stringify(j.error));
+  if (!j.result || j.result === "0x") throw new Error("Empty result");
+  const hex   = j.result.startsWith("0x") ? j.result.slice(2) : j.result;
+  const words = [];
+  for (let i=0; i<hex.length; i+=64) words.push(hex.slice(i,i+64));
+  if (words.length < 4) throw new Error(`Only ${words.length} words`);
+  const price      = parseInt(words[1],16) / 1e8;
+  const ageSeconds = Math.floor(Date.now()/1000) - parseInt(words[3],16);
+  if (price < 1000 || price > 20000) throw new Error(`Out of range: ${price}`);
+  return { price: parseFloat(price.toFixed(2)), ageSeconds };
+}
+
+function Sparkline({ data, hoverIdx, setHoverIdx, positive, cur, rates }) {
+  const ref = useRef(null);
+  const W=390, H=96, pL=2, pR=2, pT=12, pB=4;
+  const iW=W-pL-pR, iH=H-pT-pB;
+  const vals = data.map(d=>d.oz);
+  const mn=Math.min(...vals), mx=Math.max(...vals), rng=mx-mn||1;
+  const cx = i => pL+(i/(data.length-1))*iW;
+  const cy = v => pT+iH-((v-mn)/rng)*iH;
+  const line = data.map((d,i)=>`${i===0?"M":"L"}${cx(i).toFixed(1)},${cy(d.oz).toFixed(1)}`).join(" ");
+  const area = line+` L${cx(data.length-1).toFixed(1)},${H} L${cx(0).toFixed(1)},${H} Z`;
+  const hi   = hoverIdx ?? data.length-1;
+  const col  = positive ? C.gold : C.red;
+  const mxI  = vals.indexOf(mx);
+  const getIdx = x => {
+    const r = ref.current?.getBoundingClientRect();
+    if (!r) return null;
+    return Math.max(0, Math.min(data.length-1, Math.round(((x-r.left)*(W/r.width)-pL)/iW*(data.length-1))));
   };
-  return(
+  return (
     <svg ref={ref} width="100%" viewBox={`0 0 ${W} ${H}`}
       style={{display:"block",overflow:"visible",cursor:"crosshair",touchAction:"none",userSelect:"none"}}
       onMouseMove={e=>setHoverIdx(getIdx(e.clientX))} onMouseLeave={()=>setHoverIdx(null)}
@@ -119,33 +130,34 @@ function Sparkline({data,hoverIdx,setHoverIdx,positive,cur,rates}) {
   );
 }
 
-function OracleBadge({source,ageSeconds,fetching,progress}) {
-  const r=10,circ=2*Math.PI*r;
-  const col=source==="chainlink"?"#3772ff":source==="error"?C.red:C.t3;
-  const label=fetching?"FETCHING…":source==="chainlink"?"⬡ CHAINLINK":source==="error"?"ERROR":"LOADING";
-  const age=ageSeconds==null?"":ageSeconds<60?`${ageSeconds}s ago`:ageSeconds<3600?`${Math.floor(ageSeconds/60)}m ago`:`${Math.floor(ageSeconds/3600)}h ago`;
-  return(
+function PriceBadge({ clAge, fetching, progress }) {
+  const r=10, circ=2*Math.PI*r;
+  const clAge_ = clAge==null ? "" :
+    clAge<60 ? `${clAge}s ago` :
+    clAge<3600 ? `${Math.floor(clAge/60)}m ago` :
+    `${Math.floor(clAge/3600)}h ago`;
+  return (
     <div style={{display:"flex",alignItems:"center",gap:7}}>
       <svg width="22" height="22" style={{transform:"rotate(-90deg)"}}>
         <circle cx="11" cy="11" r={r} fill="none" stroke={C.s2} strokeWidth="2"/>
-        <circle cx="11" cy="11" r={r} fill="none" stroke={fetching?C.gold:col+"88"}
+        <circle cx="11" cy="11" r={r} fill="none" stroke={fetching?C.gold:"rgba(201,152,26,0.5)"}
           strokeWidth="2" strokeDasharray={circ} strokeDashoffset={circ*(1-progress)}
           strokeLinecap="round" style={{transition:"stroke-dashoffset 0.3s linear"}}/>
       </svg>
       <div>
         <div style={{display:"flex",alignItems:"center",gap:5}}>
-          <div style={{width:6,height:6,borderRadius:"50%",background:col,
-            boxShadow:source==="chainlink"?`0 0 5px ${col}55`:undefined,
-            animation:source==="chainlink"?"pulse 2s infinite":undefined}}/>
-          <span style={{fontSize:10,fontWeight:800,letterSpacing:"0.05em",color:col}}>{label}</span>
+          <div style={{width:6,height:6,borderRadius:"50%",background:C.gold,animation:"pulse 2s infinite"}}/>
+          <span style={{fontSize:10,fontWeight:800,letterSpacing:"0.05em",color:C.gold}}>
+            {fetching?"UPDATING":"LIVE"}
+          </span>
         </div>
-        {age&&<div style={{fontSize:9,color:C.t3,marginTop:1}}>updated {age}</div>}
+        {clAge_&&<div style={{fontSize:9,color:C.t3,marginTop:1}}>⬡ settle {clAge_}</div>}
       </div>
     </div>
   );
 }
 
-const TX_LIST=[
+const TX_LIST = [
   {id:1,type:"receive",label:"Mining Yield Q1",    sub:"BlueGold Trust",   oz:0.0749,date:"Mar 11, 2026",time:"9:14 AM", hash:"0x7f3A…D3f5A",network:"Base L2",memo:"Q1 2026 yield",confirms:42},
   {id:2,type:"send",   label:"Coffee Co. Payment", sub:"POS Terminal #447",oz:0.0026,date:"Mar 10, 2026",time:"11:32 AM",hash:"0xB2c1…9aF2E",network:"Base L2",memo:"In-store purchase",confirms:38},
   {id:3,type:"receive",label:"SGC Purchase",       sub:"Coinbase Exchange", oz:0.3214,date:"Mar 8, 2026", time:"2:05 PM", hash:"0x4D8e…7cA1B",network:"Base L2",memo:"Market buy",confirms:120},
@@ -153,9 +165,9 @@ const TX_LIST=[
   {id:5,type:"receive",label:"Vault Redemption",   sub:"Dubai Vault #3",   oz:0.1608,date:"Mar 5, 2026", time:"10:20 AM",hash:"0xE3b7…5eF8D",network:"Base L2",memo:"Physical→digital",confirms:200},
 ];
 
-function TxDetail({tx,liveOz,cur,rates,onClose}) {
-  const isRec=tx.type==="receive";
-  return(
+function TxDetail({ tx, liveOz, cur, rates, onClose }) {
+  const isRec = tx.type==="receive";
+  return (
     <div style={{position:"fixed",inset:0,zIndex:300,background:"rgba(245,243,238,0.92)",backdropFilter:"blur(18px)",display:"flex",alignItems:"flex-end",justifyContent:"center"}} onClick={e=>e.target===e.currentTarget&&onClose()}>
       <div style={{width:"100%",maxWidth:430,background:C.s1,borderTop:`2px solid ${isRec?C.gold:C.s2}`,borderRadius:"22px 22px 0 0",padding:"0 24px 48px",animation:"slideUp 0.28s cubic-bezier(0.22,1,0.36,1)"}}>
         <div style={{display:"flex",justifyContent:"center",padding:"14px 0 20px"}}><div style={{width:40,height:4,borderRadius:2,background:C.s2}}/></div>
@@ -184,14 +196,16 @@ function TxDetail({tx,liveOz,cur,rates,onClose}) {
   );
 }
 
-function VaultSheet({liveOz,cur,rates,onClose}) {
-  const [sel,setSel]=useState(0);
-  const BARS=[
-    {serial:"BRK-DXB-2024-00441",refinery:"Valcambi Suisse",purity:"999.9",weight:10,allocated:10,mintDate:"Nov 14, 2024",location:"Brinks Dubai · Bay 7, Rack 14, Pos 3"},
+function VaultSheet({ liveOz, clPrice, clAge, cur, rates, onClose }) {
+  const [sel,setSel] = useState(0);
+  const BARS = [
+    {serial:"BRK-DXB-2024-00441",refinery:"Valcambi Suisse",purity:"999.9",weight:10,allocated:10,    mintDate:"Nov 14, 2024",location:"Brinks Dubai · Bay 7, Rack 14, Pos 3"},
     {serial:"BRK-DXB-2025-01882",refinery:"PAMP Suisse",    purity:"999.9",weight:10,allocated:0.4194,mintDate:"Feb 28, 2025",location:"Brinks Dubai · Bay 7, Rack 14, Pos 4"},
   ];
-  const bar=BARS[sel],pct=(bar.allocated/bar.weight*100).toFixed(2);
-  return(
+  const bar  = BARS[sel];
+  const pct  = (bar.allocated/bar.weight*100).toFixed(2);
+  const clAge_ = clAge==null?"—":clAge<60?`${clAge}s`:clAge<3600?`${Math.floor(clAge/60)}m`:`${Math.floor(clAge/3600)}h`;
+  return (
     <div style={{position:"fixed",inset:0,zIndex:200,background:"rgba(26,23,16,0.55)",backdropFilter:"blur(12px)",display:"flex",alignItems:"flex-end",justifyContent:"center"}} onClick={e=>e.target===e.currentTarget&&onClose()}>
       <div style={{width:"100%",maxWidth:430,background:C.s1,borderTop:`2px solid ${C.gold}`,borderRadius:"22px 22px 0 0",maxHeight:"88vh",display:"flex",flexDirection:"column",animation:"slideUp 0.28s cubic-bezier(0.22,1,0.36,1)"}}>
         <div style={{padding:"16px 22px",borderBottom:`1px solid ${C.s2}`,display:"flex",alignItems:"center",gap:12,flexShrink:0}}>
@@ -228,9 +242,20 @@ function VaultSheet({liveOz,cur,rates,onClose}) {
               </div>
             ))}
           </div>
-          <div style={{padding:"12px 14px",background:"rgba(55,114,255,0.06)",border:"1px solid rgba(55,114,255,0.18)",borderRadius:12}}>
-            <div style={{fontSize:11,fontWeight:700,color:"#3772ff",marginBottom:4}}>⬡ Chainlink XAU/USD · Ethereum Mainnet</div>
-            <div style={{fontFamily:"'DM Mono',monospace",fontSize:9,color:C.t3,wordBreak:"break-all"}}>{CL_XAU}</div>
+          <div style={{padding:"14px 16px",background:"rgba(55,114,255,0.06)",border:"1px solid rgba(55,114,255,0.2)",borderRadius:14}}>
+            <div style={{fontSize:10,fontWeight:800,color:"#3772ff",letterSpacing:"0.06em",marginBottom:10}}>⬡ CHAINLINK · SETTLEMENT PRICE</div>
+            <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:8}}>
+              <div>
+                <div style={{fontSize:9,color:C.t3,marginBottom:3}}>ON-CHAIN PRICE</div>
+                <div style={{fontFamily:"'DM Mono',monospace",fontSize:22,fontWeight:300,color:"#3772ff"}}>{clPrice?fmt(clPrice,cur,rates):"—"}</div>
+              </div>
+              <div style={{textAlign:"right"}}>
+                <div style={{fontSize:9,color:C.t3,marginBottom:3}}>ORACLE AGE</div>
+                <div style={{fontSize:14,fontWeight:600,color:C.t2}}>{clAge_}</div>
+              </div>
+            </div>
+            <div style={{fontFamily:"'DM Mono',monospace",fontSize:9,color:C.t3,wordBreak:"break-all",marginBottom:6}}>{CL_XAU}</div>
+            <div style={{fontSize:10,color:"#3772ff",lineHeight:1.5}}>All trades settle against this Chainlink XAU/USD oracle on Ethereum Mainnet.</div>
           </div>
         </div>
       </div>
@@ -238,48 +263,54 @@ function VaultSheet({liveOz,cur,rates,onClose}) {
   );
 }
 
-function SendModal({liveOz,cur,rates,onClose}) {
-  const [step,setStep]=useState(1);
-  const [to,setTo]=useState("");
-  const [raw,setRaw]=useState("");
-  const [inOz,setInOz]=useState(true);
-  const [txHash,setTxHash]=useState("");
-  const num=parseFloat(raw)||0;
-  const ozAmt=inOz?num:num/liveOz;
-  const valid=to.trim().length>2&&ozAmt>0&&ozAmt<=HOLDING_OZ;
-  return(
+function SendModal({ liveOz, clPrice, clAge, cur, rates, onClose }) {
+  const [step,setStep] = useState(1);
+  const [to,setTo]     = useState("");
+  const [raw,setRaw]   = useState("");
+  const [inOz,setInOz] = useState(true);
+  const num    = parseFloat(raw)||0;
+  const ozAmt  = inOz ? num : num/liveOz;
+  const valid  = to.trim().length>2 && ozAmt>0 && ozAmt<=HOLDING_OZ;
+  const clAge_ = clAge==null?"—":clAge<60?`${clAge}s ago`:clAge<3600?`${Math.floor(clAge/60)}m ago`:`${Math.floor(clAge/3600)}h ago`;
+  return (
     <div style={{position:"fixed",inset:0,zIndex:200,background:"rgba(26,23,16,0.55)",backdropFilter:"blur(12px)",display:"flex",alignItems:"flex-end",justifyContent:"center"}} onClick={e=>e.target===e.currentTarget&&onClose()}>
       <div style={{width:"100%",maxWidth:430,background:C.s1,borderTop:`2px solid ${C.gold}`,borderRadius:"22px 22px 0 0",padding:"0 24px 48px",animation:"slideUp 0.28s cubic-bezier(0.22,1,0.36,1)"}}>
         <div style={{display:"flex",justifyContent:"center",padding:"14px 0 20px"}}><div style={{width:40,height:4,borderRadius:2,background:C.s2}}/></div>
-        {step===3?(
+        {step===3 ? (
           <div style={{textAlign:"center",paddingBottom:12}}>
             <div style={{width:76,height:76,borderRadius:"50%",background:"rgba(212,175,55,0.08)",border:`2px solid ${C.gold}`,display:"flex",alignItems:"center",justifyContent:"center",margin:"0 auto 16px",fontSize:30,color:C.gold}}>✓</div>
             <div style={{fontSize:20,fontWeight:700,color:C.t1,marginBottom:6}}>Gold Sent</div>
             <div style={{fontFamily:"'DM Mono',monospace",fontSize:38,fontWeight:200,color:C.gold,marginBottom:4}}>{fmtGN(ozAmt*TROY)}<span style={{fontSize:17,color:C.t3}}> g</span></div>
-            <div style={{fontSize:12,color:C.t3,marginBottom:16}}>{fmtOzN(ozAmt)} oz · {fmt(ozAmt*liveOz,cur,rates)} → {to}</div>
+            <div style={{fontSize:12,color:C.t3,marginBottom:8}}>{fmtOzN(ozAmt)} oz · {fmt(ozAmt*liveOz,cur,rates)} → {to}</div>
+            <div style={{padding:"10px 14px",background:"rgba(55,114,255,0.06)",border:"1px solid rgba(55,114,255,0.15)",borderRadius:10,fontSize:11,marginBottom:18,textAlign:"left"}}>
+              <span style={{color:"#3772ff",fontWeight:700}}>⬡ Settlement:</span> <span style={{color:C.t2}}>{clPrice?fmt(clPrice,cur,rates):"—"}/oz · Chainlink · {clAge_}</span>
+            </div>
             <button onClick={onClose} style={{width:"100%",padding:"15px",background:`linear-gradient(135deg,${C.goldD},${C.gold})`,border:"none",borderRadius:14,cursor:"pointer",fontSize:14,fontWeight:800,color:C.t1}}>Done</button>
           </div>
-        ):step===2?(
+        ) : step===2 ? (
           <div>
             <div style={{display:"flex",alignItems:"center",gap:12,marginBottom:20,paddingBottom:16,borderBottom:`1px solid ${C.s2}`}}>
               <div style={{width:44,height:44,borderRadius:12,background:"rgba(212,175,55,0.1)",display:"flex",alignItems:"center",justifyContent:"center",fontSize:20,color:C.gold}}>↑</div>
-              <div><div style={{fontSize:17,fontWeight:700}}>Review Transfer</div><div style={{fontSize:12,color:C.t3}}>Settles ~2s on Base</div></div>
+              <div><div style={{fontSize:17,fontWeight:700}}>Review Transfer</div><div style={{fontSize:12,color:C.t3}}>Settles via Chainlink on Base</div></div>
               <button onClick={onClose} style={{marginLeft:"auto",background:"none",border:"none",fontSize:18,color:C.t3,cursor:"pointer"}}>✕</button>
             </div>
-            <div style={{textAlign:"center",padding:"18px",background:C.s1,borderRadius:14,border:`1px solid ${C.s2}`,marginBottom:18}}>
+            <div style={{textAlign:"center",padding:"18px",background:C.s1,borderRadius:14,border:`1px solid ${C.s2}`,marginBottom:14}}>
               <div style={{fontFamily:"'DM Mono',monospace",fontSize:38,fontWeight:200,color:C.gold}}>{fmtGN(ozAmt*TROY)}<span style={{fontSize:16,color:C.t3}}> g</span></div>
               <div style={{fontSize:12,color:C.t3,marginTop:4}}>{fmtOzN(ozAmt)} oz · {fmt(ozAmt*liveOz,cur,rates)} → <b>{to}</b></div>
             </div>
+            <div style={{padding:"10px 14px",background:"rgba(55,114,255,0.06)",border:"1px solid rgba(55,114,255,0.15)",borderRadius:10,fontSize:11,marginBottom:18}}>
+              <span style={{color:"#3772ff",fontWeight:700}}>⬡ Settlement price:</span> <span style={{color:C.t2}}>{clPrice?fmt(clPrice,cur,rates):"—"}/oz · Chainlink · {clAge_}</span>
+            </div>
             <div style={{display:"flex",gap:10}}>
               <button onClick={()=>setStep(1)} style={{flex:1,padding:"14px",background:C.s1,border:`1px solid ${C.s2}`,borderRadius:14,color:C.t2,fontSize:14,fontWeight:600,cursor:"pointer"}}>Back</button>
-              <button onClick={()=>{setTxHash("0x"+Math.random().toString(16).slice(2,10)+"…"+Math.random().toString(16).slice(2,8));setStep(3);}} style={{flex:2,padding:"14px",background:`linear-gradient(135deg,${C.goldD},${C.gold})`,border:"none",borderRadius:14,color:C.t1,fontSize:14,fontWeight:800,cursor:"pointer"}}>Confirm Send</button>
+              <button onClick={()=>setStep(3)} style={{flex:2,padding:"14px",background:`linear-gradient(135deg,${C.goldD},${C.gold})`,border:"none",borderRadius:14,color:C.t1,fontSize:14,fontWeight:800,cursor:"pointer"}}>Confirm Send</button>
             </div>
           </div>
-        ):(
+        ) : (
           <div>
             <div style={{display:"flex",alignItems:"center",gap:12,marginBottom:20,paddingBottom:16,borderBottom:`1px solid ${C.s2}`}}>
               <div style={{width:44,height:44,borderRadius:12,background:"rgba(212,175,55,0.1)",display:"flex",alignItems:"center",justifyContent:"center",fontSize:20,color:C.gold,fontWeight:700}}>↑</div>
-              <div><div style={{fontSize:17,fontWeight:700}}>Send Gold</div><div style={{fontSize:12,color:C.t3}}>P2P transfer</div></div>
+              <div><div style={{fontSize:17,fontWeight:700}}>Send Gold</div><div style={{fontSize:12,color:C.t3}}>P2P · settles on-chain</div></div>
               <button onClick={onClose} style={{marginLeft:"auto",background:"none",border:"none",fontSize:18,color:C.t3,cursor:"pointer"}}>✕</button>
             </div>
             <div style={{marginBottom:14}}>
@@ -292,7 +323,7 @@ function SendModal({liveOz,cur,rates,onClose}) {
                 ))}
               </div>
             </div>
-            <div style={{marginBottom:18}}>
+            <div style={{marginBottom:14}}>
               <div style={{display:"flex",justifyContent:"space-between",marginBottom:7}}>
                 <div style={{fontSize:10,color:C.t3,textTransform:"uppercase",fontWeight:700}}>Amount</div>
                 <button onClick={()=>setInOz(!inOz)} style={{background:"none",border:`1px solid ${C.s2}`,cursor:"pointer",fontSize:10,color:C.gold,fontWeight:700,padding:"2px 8px",borderRadius:6}}>{inOz?"→ USD":"→ oz"}</button>
@@ -307,6 +338,9 @@ function SendModal({liveOz,cur,rates,onClose}) {
                 <span style={{fontSize:12,color:C.t3}}>{fmt(ozAmt*liveOz,cur,rates)}</span>
               </div>}
             </div>
+            <div style={{padding:"10px 14px",background:"rgba(55,114,255,0.06)",border:"1px solid rgba(55,114,255,0.15)",borderRadius:10,fontSize:11,marginBottom:18}}>
+              <span style={{color:"#3772ff",fontWeight:700}}>⬡ Settlement:</span> <span style={{color:C.t2}}>{clPrice?fmt(clPrice,cur,rates):"—"}/oz · Chainlink · {clAge_}</span>
+            </div>
             <button onClick={()=>valid&&setStep(2)} disabled={!valid} style={{width:"100%",padding:"15px",background:valid?`linear-gradient(135deg,${C.goldD},${C.gold})`:"#1a1a1a",border:"none",borderRadius:14,cursor:valid?"pointer":"not-allowed",fontSize:15,fontWeight:800,color:valid?"#080808":"#2a2a2a"}}>
               Review Transfer →
             </button>
@@ -317,7 +351,7 @@ function SendModal({liveOz,cur,rates,onClose}) {
   );
 }
 
-function Toggle({on,onToggle}) {
+function Toggle({ on, onToggle }) {
   return <div onClick={onToggle} style={{width:44,height:26,borderRadius:13,background:on?C.gold:C.s3,cursor:"pointer",position:"relative",transition:"background 0.25s",flexShrink:0}}>
     <div style={{position:"absolute",top:3,left:on?21:3,width:20,height:20,borderRadius:10,background:"#fff",transition:"left 0.25s cubic-bezier(0.4,0,0.2,1)"}}/>
   </div>;
@@ -325,8 +359,9 @@ function Toggle({on,onToggle}) {
 
 export default function App() {
   const [liveOz,     setLiveOz]     = useState(null);
-  const [ageSeconds, setAge]        = useState(null);
-  const [source,     setSource]     = useState("loading");
+  const [chgPct,     setChgPct]     = useState(null);
+  const [clPrice,    setClPrice]    = useState(null);
+  const [clAge,      setClAge]      = useState(null);
   const [fetching,   setFetching]   = useState(true);
   const [lastFetch,  setLastFetch]  = useState(null);
   const [progress,   setProgress]   = useState(0);
@@ -360,39 +395,47 @@ export default function App() {
 
   const stamp=()=>{ const n=new Date(); return `${n.getHours()}:${String(n.getMinutes()).padStart(2,"0")}:${String(n.getSeconds()).padStart(2,"0")}`; };
 
-  const fetchPrice=useCallback(async()=>{
-    if(!isVisible.current||inflight.current) return;
-    inflight.current=true; setFetching(true); setErrMsg(null);
-    try {
-      const {price,ageSeconds}=await fetchChainlink();
-      const prev=anchorOz.current;
-      if(isFirst.current) {
+  const fetchAll=useCallback(async()=>{
+    if (!isVisible.current||inflight.current) return;
+    inflight.current=true;
+    setFetching(true);
+    setErrMsg(null);
+    const [spotResult, clResult] = await Promise.allSettled([fetchSpot(), fetchChainlink()]);
+    if (spotResult.status==="fulfilled") {
+      const { price, chgPct } = spotResult.value;
+      const prev = anchorOz.current;
+      if (isFirst.current) {
         isFirst.current=false;
         anchorOz.current=price;
         setLiveOz(price);
       } else {
-        if(prev!==null&&Math.abs(price-prev)>0.5) {
+        if (prev!==null&&Math.abs(price-prev)>0.5) {
           setFlash(price>prev?"up":"down");
           setTimeout(()=>setFlash(null),1500);
         }
         anchorOz.current=price;
       }
-      setAge(ageSeconds); setSource("chainlink"); setLastFetch(stamp());
-    } catch(e) {
-      console.error("Chainlink:",e.message);
-      setErrMsg(e.message); setSource("error");
+      setChgPct(chgPct);
+      setLastFetch(stamp());
+    } else {
+      setErrMsg("Live price unavailable · "+spotResult.reason?.message);
     }
-    setFetching(false); inflight.current=false;
+    if (clResult.status==="fulfilled") {
+      setClPrice(clResult.value.price);
+      setClAge(clResult.value.ageSeconds);
+    }
+    setFetching(false);
+    inflight.current=false;
   },[]);
 
   useEffect(()=>{
-    fetchPrice();
-    const id=setInterval(()=>{ if(isVisible.current) fetchPrice(); },POLL_MS);
+    fetchAll();
+    const id=setInterval(()=>{ if(isVisible.current) fetchAll(); },POLL_MS);
     return()=>clearInterval(id);
-  },[fetchPrice]);
+  },[fetchAll]);
 
   useEffect(()=>{
-    if(!lastFetch) return;
+    if (!lastFetch) return;
     setProgress(0); progStart.current=Date.now();
     clearInterval(progRef.current);
     progRef.current=setInterval(()=>{ setProgress(Math.min((Date.now()-progStart.current)/POLL_MS,1)); },200);
@@ -401,11 +444,11 @@ export default function App() {
 
   useEffect(()=>{
     const id=setInterval(()=>{
-      if(!isVisible.current) return;
+      if (!isVisible.current) return;
       setLiveOz(prev=>{
-        if(prev===null||anchorOz.current===null) return prev;
+        if (prev===null||anchorOz.current===null) return prev;
         const diff=anchorOz.current-prev;
-        if(Math.abs(diff)<0.01) return anchorOz.current;
+        if (Math.abs(diff)<0.01) return anchorOz.current;
         return parseFloat((prev+diff*0.15).toFixed(2));
       });
     },250);
@@ -414,24 +457,24 @@ export default function App() {
 
   const [chartOz,setChartOz]=useState(5000);
   useEffect(()=>{
-    if(!liveOz) return;
+    if (!liveOz) return;
     clearTimeout(chartTimer.current);
     chartTimer.current=setTimeout(()=>setChartOz(liveOz),2000);
     return()=>clearTimeout(chartTimer.current);
   },[liveOz]);
 
-  const rangeData    =useMemo(()=>getRange(range,chartOz),[range,chartOz]);
-  const hi           =hoverIdx??rangeData.length-1;
-  const dispOz       =hoverIdx===null?(liveOz||0):rangeData[hi].oz;
-  const startOz      =rangeData[0].oz;
-  const change       =dispOz-startOz;
-  const changePct    =(change/startOz)*100;
-  const positive     =change>=0;
-  const eventNote    =EVENTS[rangeData[hi]?.ts];
-  const loading      =liveOz===null;
-  const portValue    =loading?null:HOLDING_OZ*liveOz;
-  const portChange   =portValue?portValue-INITIAL_USD:null;
-  const portChangePct=portChange?(portChange/INITIAL_USD)*100:null;
+  const rangeData     = useMemo(()=>getRange(range,chartOz),[range,chartOz]);
+  const hi            = hoverIdx??rangeData.length-1;
+  const dispOz        = hoverIdx===null?(liveOz||0):rangeData[hi].oz;
+  const startOz       = rangeData[0].oz;
+  const change        = dispOz-startOz;
+  const changePct     = (change/startOz)*100;
+  const positive      = change>=0;
+  const eventNote     = EVENTS[rangeData[hi]?.ts];
+  const loading       = liveOz===null;
+  const portValue     = loading?null:HOLDING_OZ*liveOz;
+  const portChange    = portValue?portValue-INITIAL_USD:null;
+  const portChangePct = portChange?(portChange/INITIAL_USD)*100:null;
 
   const nav=[
     {id:"home",   label:"Home",   svg:c=><svg width="22" height="22" viewBox="0 0 24 24" fill="none"><path d="M3 12L12 3L21 12V21H15V15H9V21H3V12Z" stroke={c} strokeWidth="2" strokeLinejoin="round" fill={c===C.gold?"rgba(201,152,26,0.15)":"none"}/></svg>},
@@ -443,6 +486,7 @@ export default function App() {
   return(
     <div style={{minHeight:"100vh",background:C.bg,color:C.t1,display:"flex",flexDirection:"column",alignItems:"center",fontFamily:"'DM Sans',sans-serif",paddingBottom:88}}>
       <style>{`
+        @import url('https://fonts.googleapis.com/css2?family=DM+Sans:opsz,wght@9..40,400;9..40,500;9..40,600;9..40,700;9..40,800&family=DM+Mono:wght@400;500&display=swap');
         @keyframes slideUp{from{transform:translateY(32px);opacity:0}to{transform:translateY(0);opacity:1}}
         @keyframes pulse{0%,100%{opacity:1}50%{opacity:0.4}}
         @keyframes flashUp{0%{color:#1A7A45}50%{color:#1A7A45}100%{color:inherit}}
@@ -495,16 +539,19 @@ export default function App() {
             <div style={{fontSize:12,color:C.t3,marginBottom:12}}>{fmtOzN(HOLDING_OZ)} oz · {liveOz?fmt(HOLDING_OZ*liveOz,cur,rates):"loading…"}</div>
             <div style={{display:"flex",gap:8}}>
               <div style={{padding:"4px 10px",background:"rgba(95,224,138,0.1)",border:"1px solid rgba(95,224,138,0.25)",borderRadius:6,fontSize:10,fontWeight:700,color:C.green}}>✓ ALLOCATED</div>
-              <div style={{padding:"4px 10px",background:"rgba(55,114,255,0.08)",border:"1px solid rgba(55,114,255,0.2)",borderRadius:6,fontSize:10,fontWeight:700,color:"#3772ff"}}>AUDITED</div>
+              <div style={{padding:"4px 10px",background:"rgba(55,114,255,0.08)",border:"1px solid rgba(55,114,255,0.2)",borderRadius:6,fontSize:10,fontWeight:700,color:"#3772ff"}}>⬡ CHAINLINK SETTLE</div>
             </div>
           </div>
-          <div style={{margin:"0 20px",padding:"14px 16px",background:"rgba(55,114,255,0.05)",border:"1px solid rgba(55,114,255,0.14)",borderRadius:14}}>
-            <div style={{fontSize:10,fontWeight:800,color:"#3772ff",letterSpacing:"0.06em",marginBottom:6}}>⬡ CHAINLINK XAU/USD · ETHEREUM MAINNET</div>
-            <div style={{fontFamily:"'DM Mono',monospace",fontSize:9,color:C.t3,wordBreak:"break-all",marginBottom:8}}>{CL_XAU}</div>
-            <div style={{display:"flex",gap:16,flexWrap:"wrap"}}>
-              <div><div style={{fontSize:9,color:C.t3,marginBottom:2}}>LIVE PRICE</div><div style={{fontFamily:"'DM Mono',monospace",fontSize:13,color:C.gold,fontWeight:600}}>{liveOz?fmt(liveOz,cur,rates):"—"}/oz</div></div>
-              <div><div style={{fontSize:9,color:C.t3,marginBottom:2}}>SOURCE</div><div style={{fontSize:11,color:"#3772ff",fontWeight:700}}>⬡ On-chain</div></div>
-              {ageSeconds!=null&&<div><div style={{fontSize:9,color:C.t3,marginBottom:2}}>ORACLE AGE</div><div style={{fontSize:11,color:C.t2}}>{ageSeconds<60?`${ageSeconds}s`:ageSeconds<3600?`${Math.floor(ageSeconds/60)}m`:`${Math.floor(ageSeconds/3600)}h`}</div></div>}
+          <div style={{margin:"0 20px",display:"flex",gap:10}}>
+            <div style={{flex:1,padding:"14px",background:C.s1,border:`1px solid ${C.s2}`,borderRadius:14}}>
+              <div style={{fontSize:9,color:C.t3,textTransform:"uppercase",fontWeight:700,marginBottom:6}}>Live · Yahoo Finance</div>
+              <div style={{fontFamily:"'DM Mono',monospace",fontSize:20,fontWeight:300,color:C.gold}}>{liveOz?fmt(liveOz,cur,rates):"—"}</div>
+              <div style={{fontSize:10,color:C.t3,marginTop:3}}>Display · every 15s</div>
+            </div>
+            <div style={{flex:1,padding:"14px",background:"rgba(55,114,255,0.05)",border:"1px solid rgba(55,114,255,0.2)",borderRadius:14}}>
+              <div style={{fontSize:9,color:"#3772ff",textTransform:"uppercase",fontWeight:700,marginBottom:6}}>⬡ Settlement · Chainlink</div>
+              <div style={{fontFamily:"'DM Mono',monospace",fontSize:20,fontWeight:300,color:"#3772ff"}}>{clPrice?fmt(clPrice,cur,rates):"—"}</div>
+              <div style={{fontSize:10,color:C.t3,marginTop:3}}>{clAge!=null?(clAge<60?`${clAge}s`:clAge<3600?`${Math.floor(clAge/60)}m`:`${Math.floor(clAge/3600)}h`)+" ago":"—"}</div>
             </div>
           </div>
         </div>
@@ -525,7 +572,7 @@ export default function App() {
           </div>
           <div style={{margin:"0 20px 14px",background:C.s1,border:`1px solid ${C.s2}`,borderRadius:16,overflow:"hidden"}}>
             <div style={{padding:"12px 16px",borderBottom:`1px solid ${C.s2}`,fontSize:10,color:C.t3,textTransform:"uppercase",letterSpacing:"0.1em",fontWeight:700}}>Portfolio</div>
-            {[{k:"oz held",v:`${fmtOzN(HOLDING_OZ)} oz`},{k:"Grams",v:`${fmtGN(HOLDING_G)}g`},{k:"Current value",v:portValue?fmt(portValue,cur,rates):"loading…",gold:true},{k:"Total return",v:portChange?(portChange>=0?"+":"")+fmt(portChange,cur,rates)+" ("+Math.abs(portChangePct||0).toFixed(1)+"%)":"loading…",gold:true}].map(({k,v,gold},i,a)=>(
+            {[{k:"oz held",v:`${fmtOzN(HOLDING_OZ)} oz`},{k:"Grams",v:`${fmtGN(HOLDING_G)}g`},{k:"Live value",v:portValue?fmt(portValue,cur,rates):"loading…",gold:true},{k:"Total return",v:portChange?(portChange>=0?"+":"")+fmt(portChange,cur,rates)+" ("+Math.abs(portChangePct||0).toFixed(1)+"%)":"loading…",gold:true}].map(({k,v,gold},i,a)=>(
               <div key={k} style={{display:"flex",justifyContent:"space-between",padding:"11px 16px",borderBottom:i<a.length-1?`1px solid ${C.s2}`:"none"}}>
                 <span style={{fontSize:12,color:C.t3}}>{k}</span>
                 <span style={{fontFamily:"'DM Mono',monospace",fontSize:12,color:gold?C.gold:C.t2,fontWeight:gold?600:400}}>{v}</span>
@@ -534,7 +581,7 @@ export default function App() {
           </div>
           <div style={{margin:"0 20px 14px",background:C.s1,border:`1px solid ${C.s2}`,borderRadius:16,overflow:"hidden"}}>
             <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",padding:"13px 16px",borderBottom:`1px solid ${C.s2}`}}>
-              <div><div style={{fontSize:13,fontWeight:600}}>Hide Balance</div><div style={{fontSize:11,color:C.t3}}>Mask values on home screen</div></div>
+              <div><div style={{fontSize:13,fontWeight:600}}>Hide Balance</div><div style={{fontSize:11,color:C.t3}}>Mask values on home</div></div>
               <Toggle on={hideBalance} onToggle={()=>setHideBalance(v=>!v)}/>
             </div>
             <div style={{padding:"12px 16px"}}>
@@ -556,7 +603,7 @@ export default function App() {
               <div style={{width:34,height:34,borderRadius:10,background:`linear-gradient(135deg,${C.goldD},${C.gold})`,display:"flex",alignItems:"center",justifyContent:"center",fontSize:14,fontWeight:800,color:C.t1}}>Au</div>
               <div><div style={{fontSize:15,fontWeight:800,letterSpacing:"-0.02em"}}>BlueGold</div><div style={{fontSize:10,color:C.t3,letterSpacing:"0.08em"}}>STANDARD GOLD COIN</div></div>
             </div>
-            <OracleBadge source={source} ageSeconds={ageSeconds} fetching={fetching} progress={progress}/>
+            <PriceBadge clAge={clAge} fetching={fetching} progress={progress}/>
           </div>
 
           {errMsg&&<div style={{margin:"12px 20px 0",padding:"10px 14px",background:"rgba(192,57,43,0.08)",border:"1px solid rgba(192,57,43,0.25)",borderRadius:10,fontSize:11,color:C.red}}>⚠ {errMsg}</div>}
@@ -612,23 +659,23 @@ export default function App() {
             ))}
           </div>
 
-          <div style={{margin:"14px 20px 0",padding:"13px 16px",background:C.s1,border:`1px solid ${C.s2}`,borderRadius:14,display:"flex",justifyContent:"space-between",alignItems:"center"}}>
-            <div style={{display:"flex",alignItems:"center",gap:10}}>
-              <span>🥇</span>
-              <div>
-                <div style={{fontSize:12,fontWeight:600,color:C.t2}}>XAU/{cur} · ⬡ Chainlink</div>
-                <div style={{fontSize:10,color:C.t3,marginTop:1}}>{liveOz?fmt(liveOz/TROY,cur,rates)+"/g":""} · every 15s</div>
-              </div>
-            </div>
-            <div style={{textAlign:"right"}}>
+          <div style={{margin:"14px 20px 0",display:"flex",gap:10}}>
+            <div style={{flex:1,padding:"12px 14px",background:C.s1,border:`1px solid ${C.s2}`,borderRadius:14}}>
+              <div style={{fontSize:10,fontWeight:600,color:C.t3,marginBottom:4}}>Live · Yahoo Finance</div>
               {loading
-                ?<div className="sh" style={{fontFamily:"'DM Mono',monospace",fontSize:15,color:C.t3}}>$—,———.——</div>
+                ?<div className="sh" style={{fontFamily:"'DM Mono',monospace",fontSize:16,color:C.t3}}>$—,———.——</div>
                 :<div className={flash==="up"?"fu":flash==="down"?"fd":""} style={{fontFamily:"'DM Mono',monospace",fontSize:16,fontWeight:500,color:C.gold,fontVariantNumeric:"tabular-nums"}}>{fmt(liveOz,cur,rates)}</div>
               }
+              {!loading&&chgPct!==null&&<div style={{fontSize:10,marginTop:3,color:chgPct>=0?C.green:C.red}}>{chgPct>=0?"▲ +":"▼ "}{Math.abs(chgPct).toFixed(2)}% today</div>}
+            </div>
+            <div style={{flex:1,padding:"12px 14px",background:"rgba(55,114,255,0.05)",border:"1px solid rgba(55,114,255,0.2)",borderRadius:14}}>
+              <div style={{fontSize:10,fontWeight:600,color:"#3772ff",marginBottom:4}}>⬡ Settle · Chainlink</div>
+              <div style={{fontFamily:"'DM Mono',monospace",fontSize:16,fontWeight:500,color:"#3772ff",fontVariantNumeric:"tabular-nums"}}>{clPrice?fmt(clPrice,cur,rates):"—"}</div>
+              <div style={{fontSize:10,marginTop:3,color:C.t3}}>{clAge!=null?(clAge<60?`${clAge}s`:clAge<3600?`${Math.floor(clAge/60)}m`:`${Math.floor(clAge/3600)}h`)+" ago":"—"}</div>
             </div>
           </div>
 
-          <div onClick={()=>setVaultOpen(true)} style={{margin:"8px 20px 0",padding:"11px 16px",background:C.s1,border:`1px solid ${C.s2}`,borderRadius:14,display:"flex",justifyContent:"space-between",alignItems:"center",cursor:"pointer"}}>
+          <div onClick={()=>setVaultOpen(true)} style={{margin:"10px 20px 0",padding:"11px 16px",background:C.s1,border:`1px solid ${C.s2}`,borderRadius:14,display:"flex",justifyContent:"space-between",alignItems:"center",cursor:"pointer"}}>
             <div style={{display:"flex",alignItems:"center",gap:8}}>
               <span>🏅</span>
               <span style={{fontSize:12,color:C.t2,fontWeight:500}}>Brinks Dubai · {fmtGN(HOLDING_G)}g allocated</span>
@@ -672,7 +719,7 @@ export default function App() {
                 </div>
               </div>
             )}
-            {[{k:"Opened",v:fmt(INITIAL_USD,cur,rates)},{k:"Open price",v:`${fmt(ACCOUNT_OPEN_OZ,cur,rates)}/oz`},{k:"oz held",v:`${fmtOzN(HOLDING_OZ)} oz`},{k:"Current value",v:loading?"—":hideBalance?"••••":fmt(portValue,cur,rates),gold:true},{k:"Total return",v:loading?"—":hideBalance?"••••":(portChange>=0?"+":"")+fmt(portChange,cur,rates),gold:true}].map(({k,v,gold})=>(
+            {[{k:"Opened",v:fmt(INITIAL_USD,cur,rates)},{k:"Open price",v:`${fmt(ACCOUNT_OPEN_OZ,cur,rates)}/oz`},{k:"oz held",v:`${fmtOzN(HOLDING_OZ)} oz`},{k:"Live value",v:loading?"—":hideBalance?"••••":fmt(portValue,cur,rates),gold:true},{k:"Total return",v:loading?"—":hideBalance?"••••":(portChange>=0?"+":"")+fmt(portChange,cur,rates),gold:true}].map(({k,v,gold})=>(
               <div key={k} style={{display:"flex",justifyContent:"space-between",padding:"11px 20px",borderBottom:`1px solid ${C.s2}`}}>
                 <span style={{fontSize:12,color:C.t3}}>{k}</span>
                 <span style={{fontFamily:"'DM Mono',monospace",fontSize:12,color:gold?C.gold:C.t2,fontWeight:gold?600:400}}>{v}</span>
@@ -695,8 +742,8 @@ export default function App() {
       </div>
 
       {activeTx&&<TxDetail tx={activeTx} liveOz={liveOz||0} cur={cur} rates={rates} onClose={()=>setActiveTx(null)}/>}
-      {vaultOpen&&<VaultSheet liveOz={liveOz||0} cur={cur} rates={rates} onClose={()=>setVaultOpen(false)}/>}
-      {sendOpen&&<SendModal liveOz={liveOz||0} cur={cur} rates={rates} onClose={()=>setSendOpen(false)}/>}
+      {vaultOpen&&<VaultSheet liveOz={liveOz||0} clPrice={clPrice} clAge={clAge} cur={cur} rates={rates} onClose={()=>setVaultOpen(false)}/>}
+      {sendOpen&&<SendModal liveOz={liveOz||0} clPrice={clPrice} clAge={clAge} cur={cur} rates={rates} onClose={()=>setSendOpen(false)}/>}
     </div>
   );
 }
