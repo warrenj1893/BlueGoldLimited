@@ -1,4 +1,5 @@
 import React, { useState, useEffect, useCallback, useMemo, useRef } from "react";
+import QRCode from "react-qr-code";
 
 const TROY = 31.1035;
 const ACCOUNT_OPEN_OZ = 2985.40;
@@ -57,14 +58,29 @@ const CL_XAU = "0x214eD9Da11D2fbe465a6fc601a91E62EbeC1a0D6";
 const POLL_MS = 15000;
 
 async function fetchChainlink() {
-  const res = await fetch(WORKER, {
-    method:"POST",
-    headers:{"Content-Type":"application/json"},
-    body:JSON.stringify({jsonrpc:"2.0",id:1,method:"eth_call",params:[{to:CL_XAU,data:"0xfeaf968c"},"latest"]}),
-    signal:AbortSignal.timeout(8000),
-  });
+  let res;
+  try {
+    res = await fetch(WORKER, {
+      method:"POST",
+      headers:{"Content-Type":"application/json"},
+      body:JSON.stringify({jsonrpc:"2.0",id:1,method:"eth_call",params:[{to:CL_XAU,data:"0xfeaf968c"},"latest"]}),
+      signal:AbortSignal.timeout(15000)
+    });
+  } catch(e) {
+    if (e.name === 'TimeoutError' || e.message.includes('timeout')) {
+      throw new Error("RPC node response delayed");
+    }
+    throw e;
+  }
+  const text = await res.text();
+  let j;
+  try {
+    j = JSON.parse(text);
+  } catch(e) {
+    if (!res.ok) throw new Error(`Service offline (${res.status})`);
+    throw new Error("Data provider temporarily offline");
+  }
   if (!res.ok) throw new Error(`Worker HTTP ${res.status}`);
-  const j = await res.json();
   if (j.error) throw new Error(j.error.message||JSON.stringify(j.error));
   if (!j.result||j.result==="0x") throw new Error("Empty result");
   const hex = j.result.startsWith("0x") ? j.result.slice(2) : j.result;
@@ -323,6 +339,87 @@ function Toggle({on,onToggle}) {
   </div>;
 }
 
+function ReceiveModal({liveOz,cur,rates,onClose}) {
+  const address = "0x7f3A9c2B8e1D4F6a0C5E7b3D9f2A8c4E6b1D3f5A";
+  return(
+    <div style={{position:"fixed",inset:0,zIndex:200,background:"rgba(26,23,16,0.55)",backdropFilter:"blur(12px)",display:"flex",alignItems:"flex-end",justifyContent:"center"}} onClick={e=>e.target===e.currentTarget&&onClose()}>
+      <div style={{width:"100%",maxWidth:430,background:C.s1,borderTop:`2px solid ${C.gold}`,borderRadius:"22px 22px 0 0",padding:"0 24px 48px",animation:"slideUp 0.28s cubic-bezier(0.22,1,0.36,1)"}}>
+        <div style={{display:"flex",justifyContent:"center",padding:"14px 0 20px"}}><div style={{width:40,height:4,borderRadius:2,background:C.s2}}/></div>
+        <div style={{display:"flex",alignItems:"center",gap:12,marginBottom:20,paddingBottom:16,borderBottom:`1px solid ${C.s2}`}}>
+          <div style={{width:44,height:44,borderRadius:12,background:"rgba(212,175,55,0.1)",display:"flex",alignItems:"center",justifyContent:"center",fontSize:20,color:C.gold,fontWeight:700}}>↓</div>
+          <div><div style={{fontSize:17,fontWeight:700}}>Receive Gold</div><div style={{fontSize:12,color:C.t3}}>Base L2 Network</div></div>
+          <button onClick={onClose} style={{marginLeft:"auto",background:"none",border:"none",fontSize:18,color:C.t3,cursor:"pointer"}}>✕</button>
+        </div>
+        <div style={{background:"#fff",padding:24,borderRadius:20,border:`1px solid ${C.s2}`,marginBottom:24,textAlign:"center"}}>
+          <div style={{background:"#fff",padding:10,borderRadius:12,display:"inline-block",border:`1px solid ${C.s2}`,marginBottom:16}}>
+            <QRCode value={address} size={160} fgColor={C.t1} style={{display:"block"}} />
+          </div>
+          <div style={{fontSize:11,fontWeight:700,color:C.t2,letterSpacing:"0.05em",marginBottom:6}}>YOUR ADDRESS</div>
+          <div style={{fontFamily:"'DM Mono',monospace",fontSize:12,color:C.t1,background:C.bg,padding:"10px",borderRadius:8,wordBreak:"break-all"}}>{address}</div>
+        </div>
+        <div style={{display:"flex",gap:10}}>
+          <button onClick={()=>navigator.clipboard.writeText(address)} style={{flex:1,padding:"15px",background:C.bg,border:`1px solid ${C.s2}`,borderRadius:14,cursor:"pointer",fontSize:14,fontWeight:800,color:C.t2}}>Copy</button>
+          <button onClick={onClose} style={{flex:1,padding:"15px",background:`linear-gradient(135deg,${C.goldD},${C.gold})`,border:"none",borderRadius:14,cursor:"pointer",fontSize:14,fontWeight:800,color:C.t1}}>Done</button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function BuyModal({liveOz,cur,rates,onClose}) {
+  const [amt,setAmt]=useState("");
+  const usd=parseFloat(amt)||0;
+  const oz=liveOz>0?usd/liveOz:0;
+  const valid=usd>0;
+  const [step,setStep]=useState(1);
+  return(
+    <div style={{position:"fixed",inset:0,zIndex:200,background:"rgba(26,23,16,0.55)",backdropFilter:"blur(12px)",display:"flex",alignItems:"flex-end",justifyContent:"center"}} onClick={e=>e.target===e.currentTarget&&onClose()}>
+      <div style={{width:"100%",maxWidth:430,background:C.s1,borderTop:`2px solid ${C.gold}`,borderRadius:"22px 22px 0 0",padding:"0 24px 48px",animation:"slideUp 0.28s cubic-bezier(0.22,1,0.36,1)"}}>
+        <div style={{display:"flex",justifyContent:"center",padding:"14px 0 20px"}}><div style={{width:40,height:4,borderRadius:2,background:C.s2}}/></div>
+        {step===2?(
+          <div style={{textAlign:"center",paddingBottom:12}}>
+            <div style={{width:76,height:76,borderRadius:"50%",background:"rgba(212,175,55,0.08)",border:`2px solid ${C.gold}`,display:"flex",alignItems:"center",justifyContent:"center",margin:"0 auto 16px",fontSize:30,color:C.gold}}>✓</div>
+            <div style={{fontSize:20,fontWeight:700,color:C.t1,marginBottom:6}}>Purchase Complete</div>
+            <div style={{fontFamily:"'DM Mono',monospace",fontSize:38,fontWeight:200,color:C.gold,marginBottom:4}}>{fmtGN(oz*TROY)}<span style={{fontSize:17,color:C.t3}}> g</span></div>
+            <div style={{fontSize:12,color:C.t3,marginBottom:16}}>{fmtOzN(oz)} oz added to vault</div>
+            <button onClick={onClose} style={{width:"100%",padding:"15px",background:`linear-gradient(135deg,${C.goldD},${C.gold})`,border:"none",borderRadius:14,cursor:"pointer",fontSize:14,fontWeight:800,color:C.t1}}>Done</button>
+          </div>
+        ):(
+          <div>
+            <div style={{display:"flex",alignItems:"center",gap:12,marginBottom:20,paddingBottom:16,borderBottom:`1px solid ${C.s2}`}}>
+              <div style={{width:44,height:44,borderRadius:12,background:"rgba(212,175,55,0.1)",display:"flex",alignItems:"center",justifyContent:"center",fontSize:20,color:C.gold,fontWeight:700}}>+</div>
+              <div><div style={{fontSize:17,fontWeight:700}}>Buy Gold</div><div style={{fontSize:12,color:C.t3}}>100% Fully Allocated</div></div>
+              <button onClick={onClose} style={{marginLeft:"auto",background:"none",border:"none",fontSize:18,color:C.t3,cursor:"pointer"}}>✕</button>
+            </div>
+            <div style={{marginBottom:18}}>
+              <div style={{fontSize:10,color:C.t3,textTransform:"uppercase",fontWeight:700,marginBottom:7}}>Amount to spend</div>
+              <div style={{position:"relative"}}>
+                <input type="number" value={amt} onChange={e=>setAmt(e.target.value)} placeholder="0"
+                  style={{width:"100%",boxSizing:"border-box",padding:"14px 54px 14px 13px",background:C.s1,border:`1.5px solid ${C.s2}`,borderRadius:12,color:C.t1,fontFamily:"'DM Mono',monospace",fontSize:26,fontWeight:300,outline:"none"}}/>
+                <div style={{position:"absolute",right:13,top:"50%",transform:"translateY(-50%)",fontSize:12,color:C.t3,fontWeight:700}}>USD</div>
+              </div>
+              {usd>0&&<div style={{display:"flex",gap:14,marginTop:6,padding:"0 4px"}}>
+                <span style={{fontSize:12,color:C.gold,fontWeight:600}}>Receiving ≈ {fmtGN(oz*TROY)}g SGC</span>
+                <span style={{fontSize:12,color:C.t3}}>({fmtOzN(oz)} oz)</span>
+              </div>}
+            </div>
+            <div style={{padding:"12px 14px",background:C.s2,borderRadius:12,marginBottom:20,display:"flex",alignItems:"center",justifyContent:"space-between"}}>
+              <div style={{display:"flex",alignItems:"center",gap:10}}>
+                <div style={{width:32,height:22,background:"#1A1710",borderRadius:4,display:"flex",alignItems:"center",justifyContent:"center",color:"#fff",fontSize:9,fontWeight:700}}>VISA</div>
+                <div><div style={{fontSize:12,fontWeight:600}}>Chase Sapphire</div><div style={{fontSize:10,color:C.t3}}>•••• 4432</div></div>
+              </div>
+              <span style={{fontSize:11,color:C.gold,fontWeight:700,cursor:"pointer"}}>Change</span>
+            </div>
+            <button onClick={()=>valid&&setStep(2)} disabled={!valid} style={{width:"100%",padding:"15px",background:valid?`linear-gradient(135deg,${C.goldD},${C.gold})`:"#1a1a1a",border:"none",borderRadius:14,cursor:valid?"pointer":"not-allowed",fontSize:15,fontWeight:800,color:valid?"#080808":"#2a2a2a"}}>
+              Confirm Purchase
+            </button>
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
 export default function App() {
   const [liveOz,     setLiveOz]     = useState(null);
   const [ageSeconds, setAge]        = useState(null);
@@ -337,6 +434,8 @@ export default function App() {
   const [tab,        setTab]        = useState("home");
   const [mounted,    setMounted]    = useState(false);
   const [sendOpen,   setSendOpen]   = useState(false);
+  const [buyOpen,    setBuyOpen]    = useState(false);
+  const [receiveOpen,setReceiveOpen]= useState(false);
   const [activeTx,   setActiveTx]   = useState(null);
   const [vaultOpen,  setVaultOpen]  = useState(false);
   const [cur,        setCur]        = useState("USD");
@@ -486,30 +585,6 @@ export default function App() {
         </div>
       )}
 
-      {tab==="vault"&&(
-        <div style={{width:"100%",maxWidth:430,paddingBottom:24}}>
-          <div style={{padding:"20px 20px 16px"}}><div style={{fontSize:20,fontWeight:800,marginBottom:2}}>Vault</div><div style={{fontSize:12,color:C.t3}}>Brinks Dubai · 100% allocated · LBMA 999.9</div></div>
-          <div style={{margin:"0 20px 16px",padding:"20px",background:"rgba(212,175,55,0.05)",border:"1px solid rgba(212,175,55,0.18)",borderRadius:18}}>
-            <div style={{fontSize:10,color:C.t3,textTransform:"uppercase",letterSpacing:"0.1em",fontWeight:700,marginBottom:8}}>Total Allocated</div>
-            <div style={{fontFamily:"'DM Mono',monospace",fontSize:34,fontWeight:200,color:C.gold,marginBottom:4}}>{fmtGN(HOLDING_G)}<span style={{fontSize:15,color:C.t3,marginLeft:5}}>g SGC</span></div>
-            <div style={{fontSize:12,color:C.t3,marginBottom:12}}>{fmtOzN(HOLDING_OZ)} oz · {liveOz?fmt(HOLDING_OZ*liveOz,cur,rates):"loading…"}</div>
-            <div style={{display:"flex",gap:8}}>
-              <div style={{padding:"4px 10px",background:"rgba(95,224,138,0.1)",border:"1px solid rgba(95,224,138,0.25)",borderRadius:6,fontSize:10,fontWeight:700,color:C.green}}>✓ ALLOCATED</div>
-              <div style={{padding:"4px 10px",background:"rgba(55,114,255,0.08)",border:"1px solid rgba(55,114,255,0.2)",borderRadius:6,fontSize:10,fontWeight:700,color:"#3772ff"}}>AUDITED</div>
-            </div>
-          </div>
-          <div style={{margin:"0 20px",padding:"14px 16px",background:"rgba(55,114,255,0.05)",border:"1px solid rgba(55,114,255,0.14)",borderRadius:14}}>
-            <div style={{fontSize:10,fontWeight:800,color:"#3772ff",letterSpacing:"0.06em",marginBottom:6}}>⬡ CHAINLINK XAU/USD · ETHEREUM MAINNET</div>
-            <div style={{fontFamily:"'DM Mono',monospace",fontSize:9,color:C.t3,wordBreak:"break-all",marginBottom:8}}>{CL_XAU}</div>
-            <div style={{display:"flex",gap:16,flexWrap:"wrap"}}>
-              <div><div style={{fontSize:9,color:C.t3,marginBottom:2}}>LIVE PRICE</div><div style={{fontFamily:"'DM Mono',monospace",fontSize:13,color:C.gold,fontWeight:600}}>{liveOz?fmt(liveOz,cur,rates):"—"}/oz</div></div>
-              <div><div style={{fontSize:9,color:C.t3,marginBottom:2}}>SOURCE</div><div style={{fontSize:11,color:"#3772ff",fontWeight:700}}>⬡ On-chain</div></div>
-              {ageSeconds!=null&&<div><div style={{fontSize:9,color:C.t3,marginBottom:2}}>ORACLE AGE</div><div style={{fontSize:11,color:C.t2}}>{ageSeconds<60?`${ageSeconds}s`:ageSeconds<3600?`${Math.floor(ageSeconds/60)}m`:`${Math.floor(ageSeconds/3600)}h`}</div></div>}
-            </div>
-          </div>
-        </div>
-      )}
-
       {tab==="profile"&&(
         <div style={{width:"100%",maxWidth:430,paddingBottom:24}}>
           <div style={{padding:"20px 20px 16px"}}><div style={{fontSize:20,fontWeight:800,marginBottom:2}}>Profile</div><div style={{fontSize:12,color:C.t3}}>BlueGold · SGC Wallet</div></div>
@@ -604,7 +679,7 @@ export default function App() {
           </div>
 
           <div style={{display:"flex",gap:10,padding:"20px 20px 0"}}>
-            {[{label:"Buy",icon:"+",gold:true,fn:()=>{}},{label:"Send",icon:"↑",gold:false,fn:()=>setSendOpen(true)},{label:"Receive",icon:"↓",gold:false,fn:()=>{}},{label:"Vault",icon:"🏅",gold:false,fn:()=>setVaultOpen(true)}].map(({label,icon,gold,fn})=>(
+            {[{label:"Buy",icon:"+",gold:true,fn:()=>setBuyOpen(true)},{label:"Send",icon:"↑",gold:false,fn:()=>setSendOpen(true)},{label:"Receive",icon:"↓",gold:false,fn:()=>setReceiveOpen(true)},{label:"Vault",icon:"🏅",gold:false,fn:()=>setVaultOpen(true)}].map(({label,icon,gold,fn})=>(
               <button key={label} className="btn" onClick={fn} style={{flex:1,padding:"14px 0",background:gold?`linear-gradient(145deg,${C.goldD},${C.gold})`:C.s1,border:gold?"none":`1px solid ${C.s2}`,borderRadius:14,cursor:"pointer",display:"flex",flexDirection:"column",alignItems:"center",gap:5,boxShadow:gold?"0 4px 20px rgba(212,175,55,0.2)":"none"}}>
                 <span style={{fontSize:17,color:gold?"#1A1710":C.t2,fontWeight:gold?800:400}}>{icon}</span>
                 <span style={{fontSize:10,fontWeight:800,letterSpacing:"0.08em",color:gold?"#1A1710":C.t3,textTransform:"uppercase"}}>{label}</span>
@@ -685,7 +760,10 @@ export default function App() {
       <div style={{position:"fixed",bottom:0,left:0,right:0,background:"rgba(255,255,255,0.97)",backdropFilter:"blur(20px)",borderTop:`1px solid ${C.s2}`,display:"flex",justifyContent:"center",zIndex:100}}>
         <div style={{width:"100%",maxWidth:430,display:"flex"}}>
           {nav.map(({id,label,svg})=>(
-            <button key={id} onClick={()=>setTab(id)} style={{flex:1,padding:"13px 0 11px",background:"none",border:"none",cursor:"pointer",display:"flex",flexDirection:"column",alignItems:"center",gap:4,position:"relative"}}>
+            <button key={id} onClick={()=>{
+              if(id==="vault") setVaultOpen(true);
+              else setTab(id);
+            }} style={{flex:1,padding:"13px 0 11px",background:"none",border:"none",cursor:"pointer",display:"flex",flexDirection:"column",alignItems:"center",gap:4,position:"relative"}}>
               {tab===id&&<div style={{position:"absolute",top:0,left:"50%",transform:"translateX(-50%)",width:32,height:3,borderRadius:2,background:`linear-gradient(90deg,${C.goldD},${C.gold})`}}/>}
               {svg(tab===id?C.gold:C.t3)}
               <span style={{fontSize:9,fontWeight:800,letterSpacing:"0.08em",textTransform:"uppercase",color:tab===id?C.gold:C.t3}}>{label}</span>
@@ -697,6 +775,8 @@ export default function App() {
       {activeTx&&<TxDetail tx={activeTx} liveOz={liveOz||0} cur={cur} rates={rates} onClose={()=>setActiveTx(null)}/>}
       {vaultOpen&&<VaultSheet liveOz={liveOz||0} cur={cur} rates={rates} onClose={()=>setVaultOpen(false)}/>}
       {sendOpen&&<SendModal liveOz={liveOz||0} cur={cur} rates={rates} onClose={()=>setSendOpen(false)}/>}
+      {buyOpen&&<BuyModal liveOz={liveOz||0} cur={cur} rates={rates} onClose={()=>setBuyOpen(false)}/>}
+      {receiveOpen&&<ReceiveModal liveOz={liveOz||0} cur={cur} rates={rates} onClose={()=>setReceiveOpen(false)}/>}
     </div>
   );
 }
