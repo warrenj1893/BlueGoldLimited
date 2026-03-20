@@ -58,39 +58,44 @@ const CL_XAU = "0x214eD9Da11D2fbe465a6fc601a91E62EbeC1a0D6";
 const POLL_MS = 15000;
 
 async function fetchChainlink() {
-  let res;
-  try {
-    res = await fetch(WORKER, {
-      method:"POST",
-      headers:{"Content-Type":"application/json"},
-      body:JSON.stringify({jsonrpc:"2.0",id:1,method:"eth_call",params:[{to:CL_XAU,data:"0xfeaf968c"},"latest"]}),
-      signal:AbortSignal.timeout(15000)
-    });
-  } catch(e) {
-    if (e.name === 'TimeoutError' || e.message.includes('timeout')) {
-      throw new Error("RPC node response delayed");
+  let lastErr;
+  for (let i = 0; i < 3; i++) {
+    try {
+      const res = await fetch(WORKER, {
+        method:"POST",
+        headers:{"Content-Type":"application/json"},
+        body:JSON.stringify({jsonrpc:"2.0",id:1,method:"eth_call",params:[{to:CL_XAU,data:"0xfeaf968c"},"latest"]}),
+        signal:AbortSignal.timeout(15000)
+      });
+      const text = await res.text();
+      let j;
+      try {
+        j = JSON.parse(text);
+      } catch(e) {
+        if (!res.ok) throw new Error(`Service offline (${res.status})`);
+        throw new Error("Data provider temporarily offline");
+      }
+      if (!res.ok) throw new Error(`Worker HTTP ${res.status}`);
+      if (j.error) throw new Error(j.error.message||JSON.stringify(j.error));
+      if (!j.result||j.result==="0x") throw new Error("Empty result");
+      const hex = j.result.startsWith("0x") ? j.result.slice(2) : j.result;
+      const words = [];
+      for (let k=0;k<hex.length;k+=64) words.push(hex.slice(k,k+64));
+      if (words.length<4) throw new Error(`Only ${words.length} words decoded`);
+      const price = parseInt(words[1],16)/1e8;
+      const age   = Math.floor(Date.now()/1000)-parseInt(words[3],16);
+      if (price<1000||price>20000) throw new Error(`Price out of range: ${price}`);
+      return {price:parseFloat(price.toFixed(2)),ageSeconds:age};
+    } catch(e) {
+      lastErr = e;
+      if (e.name === 'TimeoutError' || (e.message && e.message.includes('timeout'))) {
+        lastErr = new Error("RPC node response delayed");
+      }
+      if (i === 2) break;
+      await new Promise(r => setTimeout(r, 1200));
     }
-    throw e;
   }
-  const text = await res.text();
-  let j;
-  try {
-    j = JSON.parse(text);
-  } catch(e) {
-    if (!res.ok) throw new Error(`Service offline (${res.status})`);
-    throw new Error("Data provider temporarily offline");
-  }
-  if (!res.ok) throw new Error(`Worker HTTP ${res.status}`);
-  if (j.error) throw new Error(j.error.message||JSON.stringify(j.error));
-  if (!j.result||j.result==="0x") throw new Error("Empty result");
-  const hex = j.result.startsWith("0x") ? j.result.slice(2) : j.result;
-  const words = [];
-  for (let i=0;i<hex.length;i+=64) words.push(hex.slice(i,i+64));
-  if (words.length<4) throw new Error(`Only ${words.length} words decoded`);
-  const price = parseInt(words[1],16)/1e8;
-  const age   = Math.floor(Date.now()/1000)-parseInt(words[3],16);
-  if (price<1000||price>20000) throw new Error(`Price out of range: ${price}`);
-  return {price:parseFloat(price.toFixed(2)),ageSeconds:age};
+  throw lastErr;
 }
 
 function Sparkline({data,hoverIdx,setHoverIdx,positive,cur,rates}) {
@@ -372,6 +377,24 @@ function BuyModal({liveOz,cur,rates,onClose}) {
   const oz=liveOz>0?usd/liveOz:0;
   const valid=usd>0;
   const [step,setStep]=useState(1);
+
+  const handleWalletSelect = async () => {
+    if (!window.PaymentRequest) return alert("Native wallet not supported on this browser.");
+    try {
+      const methods = [
+        { supportedMethods: "https://apple.com/apple-pay", data: { version: 3, merchantIdentifier: "merchant.bluegold", merchantCapabilities: ["supports3DS"], supportedNetworks: ["visa", "masterCard", "amex"] } },
+        { supportedMethods: "https://google.com/pay", data: { environment: "TEST", apiVersion: 2, apiVersionMinor: 0, merchantInfo: { merchantName: "BlueGold" }, allowedPaymentMethods: [{ type: "CARD", parameters: { allowedAuthMethods: ["PAN_ONLY", "CRYPTOGRAM_3DS"], allowedCardNetworks: ["VISA", "MASTERCARD", "AMEX"] }, tokenizationSpecification: { type: "PAYMENT_GATEWAY", parameters: { gateway: "example" } } }] } },
+        { supportedMethods: "basic-card", data: { supportedNetworks: ["visa", "mastercard", "amex"] } }
+      ];
+      const details = { total: { label: "BlueGold Limited", amount: { currency: cur, value: (usd||100).toFixed(2) } } };
+      const req = new PaymentRequest(methods, details);
+      const res = await req.show();
+      await res.complete("success");
+    } catch(e) {
+      console.log("Wallet popup closed", e);
+    }
+  };
+
   return(
     <div style={{position:"fixed",inset:0,zIndex:200,background:"rgba(26,23,16,0.55)",backdropFilter:"blur(12px)",display:"flex",alignItems:"flex-end",justifyContent:"center"}} onClick={e=>e.target===e.currentTarget&&onClose()}>
       <div style={{width:"100%",maxWidth:430,background:C.s1,borderTop:`2px solid ${C.gold}`,borderRadius:"22px 22px 0 0",padding:"0 24px 48px",animation:"slideUp 0.28s cubic-bezier(0.22,1,0.36,1)"}}>
@@ -408,7 +431,7 @@ function BuyModal({liveOz,cur,rates,onClose}) {
                 <div style={{width:32,height:22,background:"#1A1710",borderRadius:4,display:"flex",alignItems:"center",justifyContent:"center",color:"#fff",fontSize:9,fontWeight:700}}>VISA</div>
                 <div><div style={{fontSize:12,fontWeight:600}}>Chase Sapphire</div><div style={{fontSize:10,color:C.t3}}>•••• 4432</div></div>
               </div>
-              <span style={{fontSize:11,color:C.gold,fontWeight:700,cursor:"pointer"}}>Change</span>
+              <span onClick={handleWalletSelect} style={{fontSize:11,color:C.gold,fontWeight:700,cursor:"pointer"}}>Change</span>
             </div>
             <button onClick={()=>valid&&setStep(2)} disabled={!valid} style={{width:"100%",padding:"15px",background:valid?`linear-gradient(135deg,${C.goldD},${C.gold})`:"#1a1a1a",border:"none",borderRadius:14,cursor:valid?"pointer":"not-allowed",fontSize:15,fontWeight:800,color:valid?"#080808":"#2a2a2a"}}>
               Confirm Purchase
@@ -664,7 +687,7 @@ export default function App() {
                 }
                 {!loading&&<div style={{display:"flex",alignItems:"center",gap:6,marginTop:4}}>
                   <span style={{fontSize:12,fontWeight:700,color:positive?C.gold:C.red}}>{positive?"▲":"▼"} {Math.abs(changePct).toFixed(2)}%</span>
-                  <span style={{fontSize:11,color:C.t3}}>{positive?"+":""}{fmt(change,cur,rates)} · {hoverIdx!==null?rangeData[hi].date:"since account open"}</span>
+                  <span style={{fontSize:11,color:C.t3}}>{positive?"+":""}{fmt(change,cur,rates)}{hoverIdx!==null?` · ${rangeData[hi].date}`:""}</span>
                 </div>}
               </div>
               {!loading&&<div style={{fontSize:11,color:C.t3}}>{fmt(liveOz/TROY,cur,rates)}/g</div>}
