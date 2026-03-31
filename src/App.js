@@ -121,7 +121,7 @@ function Sparkline({data,hoverIdx,setHoverIdx,positive,cur,rates}) {
       style={{display:"block",overflow:"visible",cursor:"crosshair",touchAction:"none",userSelect:"none"}}
       onMouseMove={e=>setHoverIdx(getIdx(e.clientX))} onMouseLeave={()=>setHoverIdx(null)}
       onTouchStart={e=>setHoverIdx(getIdx(e.touches[0].clientX))}
-      onTouchMove={e=>{e.preventDefault();setHoverIdx(getIdx(e.touches[0].clientX));}}
+      onTouchMove={e=>{setHoverIdx(getIdx(e.touches[0].clientX));}}
       onTouchEnd={()=>setHoverIdx(null)}>
       <defs>
         <linearGradient id="lg" x1="0" y1="0" x2="0" y2="1">
