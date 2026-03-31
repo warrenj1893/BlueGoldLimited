@@ -472,6 +472,7 @@ export default function App() {
   const progRef    = useRef(null);
   const progStart  = useRef(null);
   const chartTimer = useRef(null);
+  const failCount  = useRef(0);
 
   useEffect(()=>{ setMounted(true); },[]);
   useEffect(()=>{
@@ -499,10 +500,12 @@ export default function App() {
         }
         anchorOz.current=price;
       }
-      setAge(ageSeconds); setSource("chainlink"); setLastFetch(stamp());
+      failCount.current=0;
+      setAge(ageSeconds); setSource("chainlink"); setLastFetch(stamp()); setErrMsg(null);
     } catch(e) {
+      failCount.current+=1;
       console.error("Chainlink:",e.message);
-      setErrMsg(e.message); setSource("error");
+      if(failCount.current>=3){ setErrMsg(e.message); setSource("error"); }
     }
     setFetching(false); inflight.current=false;
   },[]);
