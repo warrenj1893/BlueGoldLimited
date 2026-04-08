@@ -79,6 +79,32 @@ const getGreeting = () => {
   return "Good evening";
 };
 
+// SHA-256 based card data derivation — unique per user, not reversible
+async function deriveCardData(userId) {
+  if (!userId) return null;
+  const enc = new TextEncoder();
+  // Hash the user ID to get card number digits
+  const h1 = await crypto.subtle.digest("SHA-256", enc.encode(`aurum:card:${userId}`));
+  const d1 = Array.from(new Uint8Array(h1));
+  // Generate 16 card digits from hash bytes, ensuring Luhn-valid-ish
+  const digits = d1.slice(0,16).map((b,i) => {
+    if (i===0) return (b % 8) + 1; // first digit 1-8 (valid BIN range)
+    return b % 10;
+  });
+  const cardNum = digits.join("");
+  const g1 = cardNum.slice(0,4), g2 = cardNum.slice(4,8), g3 = cardNum.slice(8,12), g4 = cardNum.slice(12,16);
+  // Hash again for CVV
+  const h2 = await crypto.subtle.digest("SHA-256", enc.encode(`aurum:cvv:${userId}`));
+  const d2 = Array.from(new Uint8Array(h2));
+  const cvv = String((d2[0]*100 + d2[1]*10 + d2[2]) % 1000).padStart(3,"0");
+  // Expiration: 2-5 years from now, derived from hash
+  const h3 = await crypto.subtle.digest("SHA-256", enc.encode(`aurum:exp:${userId}`));
+  const d3 = Array.from(new Uint8Array(h3));
+  const expMonth = String((d3[0] % 12) + 1).padStart(2,"0");
+  const expYear = String(new Date().getFullYear() + 2 + (d3[1] % 4)).slice(-2);
+  return { cardNum, g1, g2, g3, g4, cvv, exp: `${expMonth}/${expYear}`, last4: g4 };
+}
+
 const WORKER = "https://super-meadow-495c.johnmccannwarren.workers.dev/";
 const CL_XAU = "0x214eD9Da11D2fbe465a6fc601a91E62EbeC1a0D6";
 const POLL_MS = 15000;
@@ -574,6 +600,12 @@ export default function App() {
   const [user, setUser] = useState(() => {
     try { return JSON.parse(localStorage.getItem("aurum_user")); } catch { return null; }
   });
+  const [cardData, setCardData] = useState(null);
+  useEffect(() => {
+    if (user?.sub || user?.email) {
+      deriveCardData(user.sub || user.email).then(setCardData);
+    }
+  }, [user]);
 
   // ── Dark mode (per-user) ──
   const userKey = user?.sub || user?.email || "default";
@@ -799,7 +831,7 @@ export default function App() {
                     <span style={{opacity:0.35}}>••••</span>
                     <span style={{opacity:0.35}}>••••</span>
                     <span style={{opacity:0.35}}>••••</span>
-                    <span>4478</span>
+                    <span>{cardData?.last4||"----"}</span>
                   </div>
 
                   {/* Bottom row */}
@@ -811,7 +843,7 @@ export default function App() {
                     <div style={{display:"flex",gap:16}}>
                       <div style={{textAlign:"right"}}>
                         <div style={{fontSize:8,color:"rgba(232,220,200,0.35)",letterSpacing:"0.12em",textTransform:"uppercase",marginBottom:3}}>Exp</div>
-                        <div style={{fontFamily:"'DM Mono',monospace",fontSize:12,color:"#E8DCC8"}}>09/28</div>
+                        <div style={{fontFamily:"'DM Mono',monospace",fontSize:12,color:"#E8DCC8"}}>{cardData?.exp||"--/--"}</div>
                       </div>
                       <div style={{textAlign:"right"}}>
                         <div style={{fontSize:8,color:"rgba(232,220,200,0.35)",letterSpacing:"0.12em",textTransform:"uppercase",marginBottom:3}}>CVV</div>
@@ -834,21 +866,21 @@ export default function App() {
 
                   <div style={{fontSize:9,color:"rgba(232,220,200,0.4)",letterSpacing:"0.1em",textTransform:"uppercase",fontWeight:700,marginBottom:8}}>Card Number</div>
                   <div style={{fontFamily:"'DM Mono',monospace",fontSize:18,letterSpacing:"0.16em",color:"#E8DCC8",marginBottom:16,display:"flex",gap:12}}>
-                    <span>5291</span><span>7438</span><span>0162</span><span>4478</span>
+                    <span>{cardData?.g1||"----"}</span><span>{cardData?.g2||"----"}</span><span>{cardData?.g3||"----"}</span><span>{cardData?.g4||"----"}</span>
                   </div>
 
                   <div style={{display:"flex",gap:24,marginBottom:16}}>
                     <div>
                       <div style={{fontSize:9,color:"rgba(232,220,200,0.4)",letterSpacing:"0.1em",textTransform:"uppercase",fontWeight:700,marginBottom:4}}>Expiration</div>
-                      <div style={{fontFamily:"'DM Mono',monospace",fontSize:14,color:"#E8DCC8"}}>09/28</div>
+                      <div style={{fontFamily:"'DM Mono',monospace",fontSize:14,color:"#E8DCC8"}}>{cardData?.exp||"--/--"}</div>
                     </div>
                     <div>
                       <div style={{fontSize:9,color:"rgba(232,220,200,0.4)",letterSpacing:"0.1em",textTransform:"uppercase",fontWeight:700,marginBottom:4}}>CVV</div>
-                      <div style={{fontFamily:"'DM Mono',monospace",fontSize:14,color:"#E8DCC8"}}>847</div>
+                      <div style={{fontFamily:"'DM Mono',monospace",fontSize:14,color:"#E8DCC8"}}>{cardData?.cvv||"---"}</div>
                     </div>
                   </div>
 
-                  <button onClick={(e)=>{e.stopPropagation();navigator.clipboard.writeText("5291743801624478");}} className="tap" style={{
+                  <button onClick={(e)=>{e.stopPropagation();navigator.clipboard.writeText(cardData?.cardNum||"");}} className="tap" style={{
                     width:"100%",padding:"10px",background:`linear-gradient(135deg,${C.goldD},${C.gold})`,border:"none",borderRadius:10,
                     cursor:"pointer",fontSize:11,fontWeight:800,color:"#1A1710",letterSpacing:"0.06em",transition:"transform 0.15s ease",
                   }}>COPY CARD NUMBER</button>
