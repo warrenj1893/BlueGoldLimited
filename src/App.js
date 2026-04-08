@@ -1,6 +1,17 @@
 import React, { useState, useEffect, useCallback, useMemo, useRef } from "react";
 import QRCode from "react-qr-code";
 
+// ── Google SSO ──────────────────────────────────────────────────────────
+// Replace with your Google Cloud Console OAuth 2.0 Client ID
+const GOOGLE_CLIENT_ID = "602391283066-fk8a058vp725o4vmoq7ms67dicke3323.apps.googleusercontent.com";
+
+function decodeJwt(token) {
+  try {
+    const base64 = token.split(".")[1].replace(/-/g,"+").replace(/_/g,"/");
+    return JSON.parse(atob(base64));
+  } catch { return null; }
+}
+
 const TROY = 31.1035;
 const ACCOUNT_OPEN_OZ = 2985.40;
 const INITIAL_USD     = 1000;
@@ -47,10 +58,25 @@ const fmt = (v, cur="USD", rates={USD:1}) => {
 const fmtOzN = v => v.toLocaleString("en-US",{minimumFractionDigits:4,maximumFractionDigits:4});
 const fmtGN  = v => v.toLocaleString("en-US",{minimumFractionDigits:2,maximumFractionDigits:2});
 
-const C = {
+const LIGHT = {
   bg:"#F5F3EE",s1:"#FFFFFF",s2:"#E8E4DC",s3:"#D6D0C4",
   gold:"#C9981A",goldD:"#A87A10",goldFaint:"rgba(201,152,26,0.10)",goldDim:"rgba(201,152,26,0.30)",
   t1:"#1A1710",t2:"#5A5343",t3:"#9E9281",green:"#1A7A45",red:"#C0392B",
+  navBg:"rgba(255,255,255,0.97)",cardBg:"linear-gradient(135deg, #1A1710 0%, #2C2618 35%, #3D3422 65%, #1A1710 100%)",
+};
+const DARK = {
+  bg:"#0D0D0D",s1:"#1A1A1A",s2:"#2A2A2A",s3:"#3A3A3A",
+  gold:"#D4AF37",goldD:"#B8962E",goldFaint:"rgba(212,175,55,0.10)",goldDim:"rgba(212,175,55,0.30)",
+  t1:"#F0EDE6",t2:"#C0B8A8",t3:"#908878",green:"#2ECC71",red:"#E74C3C",
+  navBg:"rgba(13,13,13,0.97)",cardBg:"linear-gradient(135deg, #0A0A08 0%, #1A1710 35%, #2C2618 65%, #0A0A08 100%)",
+};
+let C = LIGHT;
+
+const getGreeting = () => {
+  const h = new Date().getHours();
+  if (h < 12) return "Good morning";
+  if (h < 17) return "Good afternoon";
+  return "Good evening";
 };
 
 const WORKER = "https://super-meadow-495c.johnmccannwarren.workers.dev/";
@@ -167,10 +193,10 @@ function OracleBadge({source,ageSeconds,fetching,progress}) {
 }
 
 const TX_LIST=[
-  {id:1,type:"receive",label:"Mining Yield Q1",    sub:"BlueGold Trust",   oz:0.0749,date:"Mar 11, 2026",time:"9:14 AM", hash:"0x7f3A…D3f5A",network:"Base L2",memo:"Q1 2026 yield",confirms:42},
+  {id:1,type:"receive",label:"Mining Yield Q1",    sub:"Aurum Trust",   oz:0.0749,date:"Mar 11, 2026",time:"9:14 AM", hash:"0x7f3A…D3f5A",network:"Base L2",memo:"Q1 2026 yield",confirms:42},
   {id:2,type:"send",   label:"Coffee Co. Payment", sub:"POS Terminal #447",oz:0.0026,date:"Mar 10, 2026",time:"11:32 AM",hash:"0xB2c1…9aF2E",network:"Base L2",memo:"In-store purchase",confirms:38},
   {id:3,type:"receive",label:"SGC Purchase",       sub:"Coinbase Exchange", oz:0.3214,date:"Mar 8, 2026", time:"2:05 PM", hash:"0x4D8e…7cA1B",network:"Base L2",memo:"Market buy",confirms:120},
-  {id:4,type:"send",   label:"To alex.bluegold",   sub:"Peer Transfer",    oz:0.0402,date:"Mar 7, 2026", time:"6:48 PM", hash:"0xA91f…2bD4C",network:"Base L2",memo:"Dinner split",confirms:99},
+  {id:4,type:"send",   label:"To alex.aurum",   sub:"Peer Transfer",    oz:0.0402,date:"Mar 7, 2026", time:"6:48 PM", hash:"0xA91f…2bD4C",network:"Base L2",memo:"Dinner split",confirms:99},
   {id:5,type:"receive",label:"Vault Redemption",   sub:"Dubai Vault #3",   oz:0.1608,date:"Mar 5, 2026", time:"10:20 AM",hash:"0xE3b7…5eF8D",network:"Base L2",memo:"Physical→digital",confirms:200},
 ];
 
@@ -205,59 +231,11 @@ function TxDetail({tx,liveOz,cur,rates,onClose}) {
   );
 }
 
-function VaultSheet({liveOz,cur,rates,onClose}) {
-  const [sel,setSel]=useState(0);
-  const BARS=[
-    {serial:"BRK-DXB-2024-00441",refinery:"Valcambi Suisse",purity:"999.9",weight:10,allocated:10,mintDate:"Nov 14, 2024",location:"Brinks Dubai · Bay 7, Rack 14, Pos 3"},
-    {serial:"BRK-DXB-2025-01882",refinery:"PAMP Suisse",    purity:"999.9",weight:10,allocated:0.4194,mintDate:"Feb 28, 2025",location:"Brinks Dubai · Bay 7, Rack 14, Pos 4"},
-  ];
-  const bar=BARS[sel],pct=(bar.allocated/bar.weight*100).toFixed(2);
-  return(
-    <div style={{position:"fixed",inset:0,zIndex:200,background:"rgba(26,23,16,0.55)",backdropFilter:"blur(12px)",display:"flex",alignItems:"flex-end",justifyContent:"center"}} onClick={e=>e.target===e.currentTarget&&onClose()}>
-      <div style={{width:"100%",maxWidth:430,background:C.s1,borderTop:`2px solid ${C.gold}`,borderRadius:"22px 22px 0 0",maxHeight:"88vh",display:"flex",flexDirection:"column",animation:"slideUp 0.28s cubic-bezier(0.22,1,0.36,1)"}}>
-        <div style={{padding:"16px 22px",borderBottom:`1px solid ${C.s2}`,display:"flex",alignItems:"center",gap:12,flexShrink:0}}>
-          <span style={{fontSize:20}}>🏅</span>
-          <div style={{flex:1}}><div style={{fontSize:16,fontWeight:700}}>Your Gold Bars</div><div style={{fontSize:11,color:C.t3}}>Brinks Dubai · {fmtGN(HOLDING_G)}g total</div></div>
-          <button onClick={onClose} style={{background:"none",border:"none",fontSize:18,color:C.t3,cursor:"pointer"}}>✕</button>
-        </div>
-        <div style={{flex:1,overflowY:"auto",padding:"16px 20px 40px"}}>
-          <div style={{display:"flex",gap:8,marginBottom:16}}>
-            {BARS.map((b,i)=>(
-              <button key={i} onClick={()=>setSel(i)} style={{flex:1,padding:"10px",background:sel===i?"rgba(212,175,55,0.1)":C.s1,border:`1.5px solid ${sel===i?C.gold:C.s2}`,borderRadius:12,cursor:"pointer",textAlign:"left"}}>
-                <div style={{fontSize:9,color:sel===i?C.gold:C.t3,fontWeight:700,marginBottom:2}}>BAR {i+1}</div>
-                <div style={{fontFamily:"'DM Mono',monospace",fontSize:9,color:C.t3}}>{b.serial.slice(-8)}</div>
-                <div style={{fontSize:11,fontWeight:600,color:sel===i?C.gold:C.t2,marginTop:2}}>{fmtGN(b.allocated)}g</div>
-              </button>
-            ))}
-          </div>
-          <div style={{background:C.s1,border:`1px solid ${C.s2}`,borderRadius:14,overflow:"hidden",marginBottom:14}}>
-            <div style={{padding:"14px",background:"linear-gradient(135deg,rgba(212,175,55,0.08),rgba(184,150,46,0.04))",borderBottom:`1px solid ${C.s2}`,textAlign:"center"}}>
-              <div style={{display:"inline-block",padding:"10px 20px",background:"linear-gradient(135deg,#c8a84b,#d4af37,#b8962e)",borderRadius:8,marginBottom:8}}>
-                <div style={{fontFamily:"'DM Mono',monospace",fontSize:9,color:"rgba(0,0,0,0.5)",marginBottom:3}}>FINE GOLD {bar.purity}</div>
-                <div style={{fontFamily:"'DM Mono',monospace",fontSize:13,fontWeight:700,color:"rgba(0,0,0,0.8)"}}>{bar.weight.toFixed(3)}g</div>
-                <div style={{fontFamily:"'DM Mono',monospace",fontSize:8,color:"rgba(0,0,0,0.5)",marginTop:3}}>{bar.refinery.toUpperCase()}</div>
-              </div>
-              <div style={{height:4,background:C.s2,borderRadius:2,overflow:"hidden",marginBottom:4}}>
-                <div style={{width:`${pct}%`,height:"100%",background:`linear-gradient(90deg,${C.goldD},${C.gold})`}}/>
-              </div>
-              <div style={{fontSize:11,color:C.t3}}>Your share: <span style={{color:C.gold,fontWeight:700}}>{fmtGN(bar.allocated)}g</span> / {fmtGN(bar.weight)}g ({pct}%)</div>
-            </div>
-            {[{k:"Serial",v:bar.serial},{k:"Refinery",v:bar.refinery},{k:"Purity",v:`${bar.purity} LBMA`},{k:"Mint date",v:bar.mintDate},{k:"Live value",v:fmt((bar.allocated/TROY)*liveOz,cur,rates),gold:true}].map(({k,v,gold},i,a)=>(
-              <div key={k} style={{display:"flex",justifyContent:"space-between",padding:"10px 14px",borderBottom:i<a.length-1?`1px solid ${C.s2}`:"none"}}>
-                <span style={{fontSize:11,color:C.t3}}>{k}</span>
-                <span style={{fontSize:11,color:gold?C.gold:C.t2,fontWeight:gold?600:400}}>{v}</span>
-              </div>
-            ))}
-          </div>
-          <div style={{padding:"12px 14px",background:"rgba(55,114,255,0.06)",border:"1px solid rgba(55,114,255,0.18)",borderRadius:12}}>
-            <div style={{fontSize:11,fontWeight:700,color:"#3772ff",marginBottom:4}}>⬡ Chainlink XAU/USD · Ethereum Mainnet</div>
-            <div style={{fontFamily:"'DM Mono',monospace",fontSize:9,color:C.t3,wordBreak:"break-all"}}>{CL_XAU}</div>
-          </div>
-        </div>
-      </div>
-    </div>
-  );
-}
+const VAULT_BARS=[
+  {serial:"BRK-DXB-2024-00441",refinery:"Valcambi Suisse",purity:"999.9",weight:10,allocated:10,mintDate:"Nov 14, 2024",location:"Brinks Dubai · Bay 7, Rack 14, Pos 3"},
+  {serial:"BRK-DXB-2025-01882",refinery:"PAMP Suisse",    purity:"999.9",weight:10,allocated:0.4194,mintDate:"Feb 28, 2025",location:"Brinks Dubai · Bay 7, Rack 14, Pos 4"},
+];
+const VAULT_TOTAL_G=VAULT_BARS.reduce((s,b)=>s+b.allocated,0);
 
 function SendModal({liveOz,cur,rates,onClose}) {
   const [step,setStep]=useState(1);
@@ -308,7 +286,7 @@ function SendModal({liveOz,cur,rates,onClose}) {
               <input value={to} onChange={e=>setTo(e.target.value)} placeholder="@username or 0x address"
                 style={{width:"100%",boxSizing:"border-box",padding:"13px",background:C.s1,border:`1.5px solid ${C.s2}`,borderRadius:12,color:C.t1,fontSize:14,outline:"none"}}/>
               <div style={{display:"flex",gap:7,marginTop:7}}>
-                {["@alex.bluegold","@sam.bg","@maya.gold"].map(c=>(
+                {["@alex.aurum","@sam.aurum","@maya.gold"].map(c=>(
                   <button key={c} onClick={()=>setTo(c)} style={{padding:"4px 9px",background:to===c?"rgba(212,175,55,0.1)":C.s1,border:`1px solid ${to===c?C.gold:C.s2}`,borderRadius:7,cursor:"pointer",fontSize:10,color:to===c?C.gold:C.t3,fontWeight:600}}>{c}</button>
                 ))}
               </div>
@@ -382,11 +360,11 @@ function BuyModal({liveOz,cur,rates,onClose}) {
     if (!window.PaymentRequest) return alert("Native wallet not supported on this browser.");
     try {
       const methods = [
-        { supportedMethods: "https://apple.com/apple-pay", data: { version: 3, merchantIdentifier: "merchant.bluegold", merchantCapabilities: ["supports3DS"], supportedNetworks: ["visa", "masterCard", "amex"] } },
-        { supportedMethods: "https://google.com/pay", data: { environment: "TEST", apiVersion: 2, apiVersionMinor: 0, merchantInfo: { merchantName: "BlueGold" }, allowedPaymentMethods: [{ type: "CARD", parameters: { allowedAuthMethods: ["PAN_ONLY", "CRYPTOGRAM_3DS"], allowedCardNetworks: ["VISA", "MASTERCARD", "AMEX"] }, tokenizationSpecification: { type: "PAYMENT_GATEWAY", parameters: { gateway: "example" } } }] } },
+        { supportedMethods: "https://apple.com/apple-pay", data: { version: 3, merchantIdentifier: "merchant.aurum", merchantCapabilities: ["supports3DS"], supportedNetworks: ["visa", "masterCard", "amex"] } },
+        { supportedMethods: "https://google.com/pay", data: { environment: "TEST", apiVersion: 2, apiVersionMinor: 0, merchantInfo: { merchantName: "Aurum" }, allowedPaymentMethods: [{ type: "CARD", parameters: { allowedAuthMethods: ["PAN_ONLY", "CRYPTOGRAM_3DS"], allowedCardNetworks: ["VISA", "MASTERCARD", "AMEX"] }, tokenizationSpecification: { type: "PAYMENT_GATEWAY", parameters: { gateway: "example" } } }] } },
         { supportedMethods: "basic-card", data: { supportedNetworks: ["visa", "mastercard", "amex"] } }
       ];
-      const details = { total: { label: "BlueGold Limited", amount: { currency: cur, value: (usd||100).toFixed(2) } } };
+      const details = { total: { label: "Aurum", amount: { currency: cur, value: (usd||100).toFixed(2) } } };
       const req = new PaymentRequest(methods, details);
       const res = await req.show();
       await res.complete("success");
@@ -443,6 +421,129 @@ function BuyModal({liveOz,cur,rates,onClose}) {
   );
 }
 
+// ── Login Screen ────────────────────────────────────────────────────────
+function LoginScreen({ onLogin }) {
+  const btnRef = useRef(null);
+  const [ready, setReady] = useState(false);
+  const [showFallback, setShowFallback] = useState(false);
+
+  useEffect(() => {
+    let attempts = 0;
+    const tryInit = () => {
+      if (window.google?.accounts?.id) {
+        window.google.accounts.id.initialize({
+          client_id: GOOGLE_CLIENT_ID,
+          callback: (response) => {
+            const profile = decodeJwt(response.credential);
+            if (profile) {
+              const user = {
+                name: profile.name,
+                email: profile.email,
+                picture: profile.picture,
+                sub: profile.sub,
+                credential: response.credential,
+              };
+              localStorage.setItem("aurum_user", JSON.stringify(user));
+              onLogin(user);
+            }
+          },
+          auto_select: true,
+        });
+        if (btnRef.current) {
+          window.google.accounts.id.renderButton(btnRef.current, {
+            type: "standard",
+            shape: "pill",
+            theme: "outline",
+            size: "large",
+            text: "signin_with",
+            width: 300,
+          });
+        }
+        setReady(true);
+      } else {
+        attempts++;
+        if (attempts < 30) setTimeout(tryInit, 200);
+        else setShowFallback(true);
+      }
+    };
+    tryInit();
+  }, [onLogin]);
+
+  return (
+    <div style={{
+      minHeight: "100vh", background: C.bg, display: "flex", flexDirection: "column",
+      alignItems: "center", justifyContent: "center", fontFamily: "'DM Sans',sans-serif",
+      padding: "40px 24px", textAlign: "center",
+    }}>
+      <style>{`
+        @keyframes coinSpin { 0%{transform:rotateY(0deg)} 100%{transform:rotateY(360deg)} }
+        @keyframes fadeUp { from{opacity:0;transform:translateY(20px)} to{opacity:1;transform:translateY(0)} }
+        @keyframes shimmerBg { 0%{background-position:200% 0} 100%{background-position:-200% 0} }
+      `}</style>
+
+      {/* Coin logo */}
+      <div style={{
+        width: 88, height: 88, borderRadius: "50%",
+        background: `linear-gradient(145deg, ${C.goldD}, ${C.gold}, #e8c94a)`,
+        display: "flex", alignItems: "center", justifyContent: "center",
+        boxShadow: "0 8px 32px rgba(201,152,26,0.35), inset 0 -2px 6px rgba(0,0,0,0.15), inset 0 2px 6px rgba(255,255,255,0.3)",
+        marginBottom: 28,
+        animation: "coinSpin 3s ease-in-out infinite",
+        perspective: 800,
+      }}>
+        <span style={{ fontSize: 32, fontWeight: 800, color: "#1A1710", fontFamily: "'DM Sans',sans-serif" }}>Au</span>
+      </div>
+
+      {/* Brand text */}
+      <div style={{ animation: "fadeUp 0.6s ease 0.1s both" }}>
+        <div style={{ fontSize: 34, fontWeight: 800, color: C.t1, letterSpacing: "-0.03em", marginBottom: 4 }}>Aurum</div>
+        <div style={{ fontSize: 11, color: C.t3, letterSpacing: "0.18em", textTransform: "uppercase", fontWeight: 700, marginBottom: 8 }}>Standard Gold Coin</div>
+        <div style={{ fontSize: 13, color: C.t2, maxWidth: 280, margin: "0 auto 36px", lineHeight: 1.5 }}>
+          Fully allocated gold, secured on-chain. Sign in to access your vault.
+        </div>
+      </div>
+
+      {/* Google Sign-In button */}
+      <div style={{ animation: "fadeUp 0.6s ease 0.3s both", marginBottom: 24, minHeight: 50, display: "flex", alignItems: "center", justifyContent: "center" }}>
+        <div ref={btnRef} />
+        {!ready && !showFallback && (
+          <div style={{ fontSize: 12, color: C.t3 }}>Loading sign-in…</div>
+        )}
+        {showFallback && (
+          <div style={{ fontSize: 12, color: C.red }}>Could not load Google Sign-In. Check your Client ID or network.</div>
+        )}
+      </div>
+
+      {/* Decorative divider */}
+      <div style={{ display: "flex", alignItems: "center", gap: 12, marginBottom: 24, width: 260 }}>
+        <div style={{ flex: 1, height: 1, background: C.s2 }} />
+        <span style={{ fontSize: 9, color: C.t3, letterSpacing: "0.12em", textTransform: "uppercase", fontWeight: 700 }}>secured by</span>
+        <div style={{ flex: 1, height: 1, background: C.s2 }} />
+      </div>
+
+      {/* Trust badges */}
+      <div style={{ display: "flex", gap: 20, animation: "fadeUp 0.6s ease 0.5s both" }}>
+        {[
+          { icon: "⬡", label: "Chainlink", sub: "Oracle" },
+          { icon: "🏦", label: "Brinks", sub: "Dubai Vault" },
+          { icon: "⛓", label: "Base L2", sub: "Network" },
+        ].map(({ icon, label, sub }) => (
+          <div key={label} style={{ textAlign: "center" }}>
+            <div style={{ fontSize: 18, marginBottom: 4 }}>{icon}</div>
+            <div style={{ fontSize: 10, fontWeight: 700, color: C.t2 }}>{label}</div>
+            <div style={{ fontSize: 9, color: C.t3 }}>{sub}</div>
+          </div>
+        ))}
+      </div>
+
+      {/* Footer */}
+      <div style={{ position: "fixed", bottom: 24, fontSize: 10, color: C.t3, letterSpacing: "0.06em" }}>
+        © {new Date().getFullYear()} Aurum · All assets fully allocated
+      </div>
+    </div>
+  );
+}
+
 export default function App() {
   const [liveOz,     setLiveOz]     = useState(null);
   const [ageSeconds, setAge]        = useState(null);
@@ -460,10 +561,42 @@ export default function App() {
   const [buyOpen,    setBuyOpen]    = useState(false);
   const [receiveOpen,setReceiveOpen]= useState(false);
   const [activeTx,   setActiveTx]   = useState(null);
-  const [vaultOpen,  setVaultOpen]  = useState(false);
+  const [vaultSellOpen,setVaultSellOpen]=useState(false);
+  const [sellBarIdx,setSellBarIdx]=useState(0);
+  const [sellAmt,setSellAmt]=useState("");
+  const [vaultDetail,setVaultDetail]=useState(null);
   const [cur,        setCur]        = useState("USD");
   const [rates]                     = useState({USD:1,AED:3.6725,EUR:0.92,GBP:0.78,SGD:1.34});
   const [hideBalance,setHideBalance]= useState(false);
+  const [cardFlipped,setCardFlipped]= useState(false);
+
+  // ── Auth state ──
+  const [user, setUser] = useState(() => {
+    try { return JSON.parse(localStorage.getItem("aurum_user")); } catch { return null; }
+  });
+
+  // ── Dark mode (per-user) ──
+  const userKey = user?.sub || user?.email || "default";
+  const [darkMode, setDarkMode] = useState(() => {
+    try { return localStorage.getItem(`aurum_dark_${userKey}`) === "true"; } catch { return false; }
+  });
+  C = darkMode ? DARK : LIGHT;
+
+  const toggleDarkMode = useCallback(() => {
+    setDarkMode(prev => {
+      const next = !prev;
+      localStorage.setItem(`aurum_dark_${userKey}`, String(next));
+      return next;
+    });
+  }, [userKey]);
+
+  const handleSignOut = useCallback(() => {
+    localStorage.removeItem("aurum_user");
+    setUser(null);
+    if (window.google?.accounts?.id) {
+      window.google.accounts.id.disableAutoSelect();
+    }
+  }, []);
 
   const anchorOz   = useRef(null);
   const inflight   = useRef(false);
@@ -565,15 +698,23 @@ export default function App() {
     {id:"profile",label:"Profile",svg:c=><svg width="22" height="22" viewBox="0 0 24 24" fill="none"><circle cx="12" cy="8" r="4" stroke={c} strokeWidth="2" fill={c===C.gold?"rgba(201,152,26,0.12)":"none"}/><path d="M4 20c0-4 3.6-7 8-7s8 3 8 7" stroke={c} strokeWidth="2" strokeLinecap="round"/></svg>},
   ];
 
+  // ── Auth gate: show login screen if not signed in ──
+  if (!user) {
+    return <LoginScreen onLogin={setUser} />;
+  }
+
   return(
-    <div style={{minHeight:"100vh",background:C.bg,color:C.t1,display:"flex",flexDirection:"column",alignItems:"center",fontFamily:"'DM Sans',sans-serif",paddingBottom:88}}>
+    <div style={{minHeight:"100vh",background:C.bg,color:C.t1,display:"flex",flexDirection:"column",alignItems:"center",fontFamily:"'DM Sans',sans-serif",paddingBottom:88,transition:"background 0.3s ease, color 0.3s ease"}}>
       <style>{`
         @keyframes slideUp{from{transform:translateY(32px);opacity:0}to{transform:translateY(0);opacity:1}}
         @keyframes pulse{0%,100%{opacity:1}50%{opacity:0.4}}
         @keyframes flashUp{0%{color:#1A7A45}50%{color:#1A7A45}100%{color:inherit}}
         @keyframes flashDown{0%{color:#C0392B}50%{color:#C0392B}100%{color:inherit}}
         @keyframes shimmer{0%{opacity:0.3}50%{opacity:0.7}100%{opacity:0.3}}
+        @keyframes spinGold{from{transform:rotate(0deg)}to{transform:rotate(360deg)}}
+        @keyframes cardFlip{from{transform:perspective(800px) rotateY(0deg)}to{transform:perspective(800px) rotateY(180deg)}}
         *{box-sizing:border-box;margin:0;padding:0;-webkit-tap-highlight-color:transparent;}
+        .tap:active{transform:scale(0.96) !important;}
         .btn:active{transform:scale(0.94);}
         input[type=number]::-webkit-inner-spin-button{-webkit-appearance:none;}
         ::-webkit-scrollbar{width:0;height:0;}
@@ -582,17 +723,214 @@ export default function App() {
         .sh{animation:shimmer 1.4s ease-in-out infinite;}
       `}</style>
 
+      {/* Pull-to-refresh indicator */}
+      {fetching&&<div style={{position:"fixed",top:8,left:"50%",transform:"translateX(-50%)",zIndex:150,display:"flex",alignItems:"center",gap:6,padding:"5px 14px",background:darkMode?"rgba(26,26,26,0.95)":"rgba(255,255,255,0.95)",borderRadius:20,boxShadow:"0 2px 12px rgba(0,0,0,0.1)",backdropFilter:"blur(10px)",border:`1px solid ${C.s2}`}}>
+        <div style={{width:14,height:14,border:`2px solid ${C.gold}`,borderTopColor:"transparent",borderRadius:"50%",animation:"spinGold 0.8s linear infinite"}} />
+        <span style={{fontSize:10,color:C.gold,fontWeight:700,letterSpacing:"0.06em"}}>UPDATING</span>
+      </div>}
+
       {tab==="wallet"&&(
         <div style={{width:"100%",maxWidth:430,paddingBottom:24}}>
-          <div style={{padding:"20px 20px 0",marginBottom:16}}><div style={{fontSize:20,fontWeight:800,marginBottom:2}}>Activity</div><div style={{fontSize:12,color:C.t3}}>Base L2 · ERC-20 · SGC</div></div>
-          <div style={{margin:"0 20px 16px",padding:"16px 18px",background:C.s1,border:`1px solid ${C.s2}`,borderRadius:16,display:"flex",justifyContent:"space-between",alignItems:"center"}}>
-            <div>
-              <div style={{fontSize:10,color:C.t3,textTransform:"uppercase",letterSpacing:"0.1em",fontWeight:700,marginBottom:4}}>SGC Balance</div>
-              <div style={{fontFamily:"'DM Mono',monospace",fontSize:22,fontWeight:300,color:C.gold}}>{fmtOzN(HOLDING_OZ)} oz</div>
-              <div style={{fontSize:11,color:C.t3,marginTop:3}}>{fmtGN(HOLDING_G)}g · {liveOz?fmt(HOLDING_OZ*liveOz,cur,rates):"—"}</div>
+          <div style={{padding:"20px 20px 0",marginBottom:16}}><div style={{fontSize:20,fontWeight:800,marginBottom:2}}>Wallet</div><div style={{fontSize:12,color:C.t3}}>Base L2 · ERC-20 · SGC</div></div>
+          <div style={{margin:"0 20px 16px",padding:"16px 18px",background:C.s1,border:`1px solid ${C.s2}`,borderRadius:16}}>
+            <div style={{marginBottom:14}}>
+              <div style={{fontSize:10,color:C.t3,textTransform:"uppercase",letterSpacing:"0.1em",fontWeight:700,marginBottom:4}}>Balance</div>
+              <div style={{fontFamily:"'DM Mono',monospace",fontSize:22,fontWeight:300,color:C.gold}}>{liveOz?fmt(HOLDING_OZ*liveOz,cur,rates):"—"}</div>
+              <div style={{fontSize:11,color:C.t3,marginTop:3}}>{fmtOzN(HOLDING_OZ)} oz · {fmtGN(HOLDING_G)}g SGC</div>
             </div>
-            <button onClick={()=>setSendOpen(true)} style={{padding:"10px 16px",background:`linear-gradient(135deg,${C.goldD},${C.gold})`,border:"none",borderRadius:10,cursor:"pointer",fontSize:12,fontWeight:800,color:C.t1}}>Send ↑</button>
+            <div style={{display:"flex",gap:8}}>
+              <button onClick={()=>setSendOpen(true)} style={{flex:1,padding:"11px 0",background:`linear-gradient(135deg,${C.goldD},${C.gold})`,border:"none",borderRadius:10,cursor:"pointer",fontSize:12,fontWeight:800,color:C.t1,display:"flex",alignItems:"center",justifyContent:"center",gap:5}}>Send ↑</button>
+              <button onClick={()=>setReceiveOpen(true)} style={{flex:1,padding:"11px 0",background:C.s1,border:`1.5px solid ${C.s2}`,borderRadius:10,cursor:"pointer",fontSize:12,fontWeight:800,color:C.t2,display:"flex",alignItems:"center",justifyContent:"center",gap:5}}>Receive ↓</button>
+            </div>
           </div>
+
+          {/* ── Aurum Card (Flippable) ── */}
+          <style>{`
+            @keyframes cardShine { 0%{transform:translateX(-100%) rotate(25deg)} 100%{transform:translateX(200%) rotate(25deg)} }
+            .card-container { perspective: 1000px; }
+            .card-inner { position:relative; width:100%; transition: transform 0.6s cubic-bezier(0.4,0,0.2,1); transform-style: preserve-3d; }
+            .card-inner.flipped { transform: rotateY(180deg); }
+            .card-front, .card-back { backface-visibility: hidden; -webkit-backface-visibility: hidden; border-radius:18px; min-height:200px; }
+            .card-back { position:absolute; top:0; left:0; right:0; transform: rotateY(180deg); }
+            .card-front { transition: box-shadow 0.35s ease; }
+            .card-front:hover { box-shadow: 0 20px 60px rgba(201,152,26,0.30), 0 4px 20px rgba(0,0,0,0.12) !important; }
+          `}</style>
+          <div style={{margin:"0 20px 16px"}}>
+            <div className="card-container" onClick={()=>setCardFlipped(f=>!f)} style={{cursor:"pointer"}}>
+              <div className={`card-inner${cardFlipped?" flipped":""}`}>
+                {/* ── FRONT ── */}
+                <div className="card-front" style={{
+                  position:"relative", overflow:"hidden",
+                  background:C.cardBg||"linear-gradient(135deg, #1A1710 0%, #2C2618 35%, #3D3422 65%, #1A1710 100%)",
+                  padding:"22px 24px 20px",
+                  boxShadow:"0 12px 40px rgba(0,0,0,0.25), 0 2px 12px rgba(201,152,26,0.15)",
+                }}>
+                  {/* Shine */}
+                  <div style={{position:"absolute",top:0,left:0,right:0,bottom:0,overflow:"hidden",borderRadius:18,pointerEvents:"none"}}>
+                    <div style={{position:"absolute",top:"-50%",width:"60%",height:"200%",background:"linear-gradient(90deg,transparent,rgba(255,255,255,0.06),transparent)",animation:"cardShine 4s ease-in-out infinite"}} />
+                  </div>
+                  <div style={{position:"absolute",top:0,left:0,right:0,height:3,background:`linear-gradient(90deg,transparent,${C.gold},transparent)`,opacity:0.6}} />
+
+                  {/* Top row */}
+                  <div style={{display:"flex",justifyContent:"space-between",alignItems:"flex-start",marginBottom:20}}>
+                    <div style={{display:"flex",alignItems:"center",gap:8}}>
+                      <div style={{width:36,height:36,borderRadius:10,background:`linear-gradient(135deg,${C.goldD},${C.gold})`,display:"flex",alignItems:"center",justifyContent:"center",fontSize:14,fontWeight:800,color:"#1A1710"}}>Au</div>
+                      <div>
+                        <div style={{fontSize:14,fontWeight:800,color:"#E8DCC8",letterSpacing:"-0.02em"}}>Aurum</div>
+                        <div style={{fontSize:8,color:"rgba(232,220,200,0.4)",letterSpacing:"0.12em",textTransform:"uppercase"}}>Gold Card</div>
+                      </div>
+                    </div>
+                    <svg width="28" height="28" viewBox="0 0 24 24" fill="none" style={{opacity:0.5}}>
+                      <path d="M7 17.5c3-3 3-8 0-11" stroke={C.gold} strokeWidth="1.8" strokeLinecap="round"/>
+                      <path d="M11 19.5c4.5-4.5 4.5-12 0-16.5" stroke={C.gold} strokeWidth="1.8" strokeLinecap="round"/>
+                      <path d="M15 21.5c6-6 6-16 0-22" stroke={C.gold} strokeWidth="1.8" strokeLinecap="round"/>
+                    </svg>
+                  </div>
+
+                  {/* EMV chip */}
+                  <div style={{width:42,height:32,borderRadius:6,background:"linear-gradient(145deg,#c8a84b,#b8962e,#d4af37)",marginBottom:18,position:"relative",overflow:"hidden",boxShadow:"inset 0 1px 2px rgba(255,255,255,0.3), inset 0 -1px 2px rgba(0,0,0,0.2)"}}>
+                    <div style={{position:"absolute",top:"50%",left:0,right:0,height:1,background:"rgba(0,0,0,0.15)"}} />
+                    <div style={{position:"absolute",top:0,bottom:0,left:"50%",width:1,background:"rgba(0,0,0,0.1)"}} />
+                    <div style={{position:"absolute",top:4,left:4,right:4,bottom:4,border:"1px solid rgba(0,0,0,0.08)",borderRadius:3}} />
+                  </div>
+
+                  {/* Masked number */}
+                  <div style={{fontFamily:"'DM Mono',monospace",fontSize:17,letterSpacing:"0.16em",color:"#E8DCC8",marginBottom:18,display:"flex",gap:14}}>
+                    <span style={{opacity:0.35}}>••••</span>
+                    <span style={{opacity:0.35}}>••••</span>
+                    <span style={{opacity:0.35}}>••••</span>
+                    <span>4478</span>
+                  </div>
+
+                  {/* Bottom row */}
+                  <div style={{display:"flex",justifyContent:"space-between",alignItems:"flex-end"}}>
+                    <div>
+                      <div style={{fontSize:8,color:"rgba(232,220,200,0.35)",letterSpacing:"0.12em",textTransform:"uppercase",marginBottom:3}}>Card Holder</div>
+                      <div style={{fontSize:13,fontWeight:600,color:"#E8DCC8",letterSpacing:"0.04em",textTransform:"uppercase"}}>{user.name||"CARD HOLDER"}</div>
+                    </div>
+                    <div style={{display:"flex",gap:16}}>
+                      <div style={{textAlign:"right"}}>
+                        <div style={{fontSize:8,color:"rgba(232,220,200,0.35)",letterSpacing:"0.12em",textTransform:"uppercase",marginBottom:3}}>Exp</div>
+                        <div style={{fontFamily:"'DM Mono',monospace",fontSize:12,color:"#E8DCC8"}}>09/28</div>
+                      </div>
+                      <div style={{textAlign:"right"}}>
+                        <div style={{fontSize:8,color:"rgba(232,220,200,0.35)",letterSpacing:"0.12em",textTransform:"uppercase",marginBottom:3}}>CVV</div>
+                        <div style={{fontFamily:"'DM Mono',monospace",fontSize:12,color:"#E8DCC8"}}>•••</div>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+
+                {/* ── BACK ── */}
+                <div className="card-back" style={{
+                  overflow:"hidden",
+                  background:C.cardBg||"linear-gradient(135deg, #1A1710 0%, #2C2618 35%, #3D3422 65%, #1A1710 100%)",
+                  padding:"22px 24px 20px",
+                  boxShadow:"0 12px 40px rgba(0,0,0,0.25), 0 2px 12px rgba(201,152,26,0.15)",
+                }}>
+                  <div style={{position:"absolute",top:0,left:0,right:0,height:3,background:`linear-gradient(90deg,transparent,${C.gold},transparent)`,opacity:0.6}} />
+                  {/* Mag stripe */}
+                  <div style={{background:"#111",height:36,margin:"-22px -24px 20px",borderRadius:"18px 18px 0 0"}} />
+
+                  <div style={{fontSize:9,color:"rgba(232,220,200,0.4)",letterSpacing:"0.1em",textTransform:"uppercase",fontWeight:700,marginBottom:8}}>Card Number</div>
+                  <div style={{fontFamily:"'DM Mono',monospace",fontSize:18,letterSpacing:"0.16em",color:"#E8DCC8",marginBottom:16,display:"flex",gap:12}}>
+                    <span>5291</span><span>7438</span><span>0162</span><span>4478</span>
+                  </div>
+
+                  <div style={{display:"flex",gap:24,marginBottom:16}}>
+                    <div>
+                      <div style={{fontSize:9,color:"rgba(232,220,200,0.4)",letterSpacing:"0.1em",textTransform:"uppercase",fontWeight:700,marginBottom:4}}>Expiration</div>
+                      <div style={{fontFamily:"'DM Mono',monospace",fontSize:14,color:"#E8DCC8"}}>09/28</div>
+                    </div>
+                    <div>
+                      <div style={{fontSize:9,color:"rgba(232,220,200,0.4)",letterSpacing:"0.1em",textTransform:"uppercase",fontWeight:700,marginBottom:4}}>CVV</div>
+                      <div style={{fontFamily:"'DM Mono',monospace",fontSize:14,color:"#E8DCC8"}}>847</div>
+                    </div>
+                  </div>
+
+                  <button onClick={(e)=>{e.stopPropagation();navigator.clipboard.writeText("5291743801624478");}} className="tap" style={{
+                    width:"100%",padding:"10px",background:`linear-gradient(135deg,${C.goldD},${C.gold})`,border:"none",borderRadius:10,
+                    cursor:"pointer",fontSize:11,fontWeight:800,color:"#1A1710",letterSpacing:"0.06em",transition:"transform 0.15s ease",
+                  }}>COPY CARD NUMBER</button>
+                </div>
+              </div>
+            </div>
+
+            {/* Hint */}
+            <div style={{display:"flex",alignItems:"center",justifyContent:"center",gap:6,marginTop:10,padding:"4px 0"}}>
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none">
+                <path d="M7 17.5c3-3 3-8 0-11" stroke={C.t3} strokeWidth="1.5" strokeLinecap="round"/>
+                <path d="M11 19.5c4.5-4.5 4.5-12 0-16.5" stroke={C.t3} strokeWidth="1.5" strokeLinecap="round"/>
+              </svg>
+              <span style={{fontSize:10,color:C.t3,fontWeight:600,letterSpacing:"0.06em"}}>{cardFlipped?"TAP CARD TO FLIP BACK":"TAP CARD TO REVEAL DETAILS"}</span>
+            </div>
+
+            {/* ── Card Action Buttons ── */}
+            <div style={{display:"flex",flexDirection:"column",gap:8,marginTop:10}}>
+              {/* Tap to Pay */}
+              <button className="tap" onClick={async()=>{
+                if(!window.PaymentRequest) return alert("Tap to Pay requires a secure context (HTTPS) or a compatible browser.");
+                try {
+                  const methods=[
+                    {supportedMethods:"https://apple.com/apple-pay",data:{version:3,merchantIdentifier:"merchant.aurum",merchantCapabilities:["supports3DS"],supportedNetworks:["visa","masterCard","amex"]}},
+                    {supportedMethods:"https://google.com/pay",data:{environment:"TEST",apiVersion:2,apiVersionMinor:0,merchantInfo:{merchantName:"Aurum"},allowedPaymentMethods:[{type:"CARD",parameters:{allowedAuthMethods:["PAN_ONLY","CRYPTOGRAM_3DS"],allowedCardNetworks:["VISA","MASTERCARD","AMEX"]},tokenizationSpecification:{type:"PAYMENT_GATEWAY",parameters:{gateway:"example"}}}]}},
+                    {supportedMethods:"basic-card",data:{supportedNetworks:["visa","mastercard","amex"]}}
+                  ];
+                  const details={total:{label:"Aurum Tap to Pay",amount:{currency:cur,value:"0.00"}}};
+                  const req=new PaymentRequest(methods,details);
+                  const res=await req.show();
+                  await res.complete("success");
+                } catch(e){ console.log("Tap to Pay dismissed",e); }
+              }} style={{
+                width:"100%",padding:"13px",background:`linear-gradient(135deg,${C.goldD},${C.gold})`,border:"none",borderRadius:12,
+                cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"center",gap:8,
+                boxShadow:"0 4px 16px rgba(201,152,26,0.25)",transition:"transform 0.15s ease",
+              }}>
+                <svg width="18" height="18" viewBox="0 0 24 24" fill="none">
+                  <path d="M7 17.5c3-3 3-8 0-11" stroke="#1A1710" strokeWidth="2" strokeLinecap="round"/>
+                  <path d="M11 19.5c4.5-4.5 4.5-12 0-16.5" stroke="#1A1710" strokeWidth="2" strokeLinecap="round"/>
+                  <path d="M15 21.5c6-6 6-16 0-22" stroke="#1A1710" strokeWidth="2" strokeLinecap="round"/>
+                </svg>
+                <span style={{fontSize:12,fontWeight:800,color:"#1A1710",letterSpacing:"0.04em"}}>Tap to Pay</span>
+              </button>
+
+              {/* Add to Wallet — auto-detects platform */}
+              {(()=>{
+                const ua=navigator.userAgent||"";
+                const isApple=/iPhone|iPad|iPod|Mac/i.test(ua);
+                const walletName=isApple?"Apple Wallet":"Google Wallet";
+                const walletMsg=isApple
+                  ?"Add to Apple Wallet requires a server-side .pkpass file. In production, this will provision your Aurum card to Apple Wallet via PassKit."
+                  :"Add to Google Wallet requires a server-side JWT pass. In production, this will provision your Aurum card to Google Wallet via the Google Wallet API.";
+                return(
+                  <button className="tap" onClick={()=>alert(walletMsg)} style={{
+                    width:"100%",padding:"13px",background:isApple?(darkMode?"#1A1A1A":"#000"):(darkMode?"#1A1A1A":"#fff"),
+                    border:isApple?"none":`1.5px solid ${C.s2}`,borderRadius:12,
+                    cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"center",gap:8,
+                    transition:"transform 0.15s ease",
+                  }}>
+                    {isApple?(
+                      <svg width="18" height="18" viewBox="0 0 24 24" fill="none">
+                        <path d="M18.7 8.3c-.1.1-2.1 1.2-2.1 3.7 0 2.9 2.5 3.9 2.6 3.9 0 0-.4 1.3-1.2 2.6-.7 1.2-1.5 2.3-2.7 2.3-1.2 0-1.5-.7-2.8-.7-1.3 0-1.7.7-2.8.7-1.2 0-2-1.2-2.7-2.3C5.6 16.4 4.5 13.2 4.5 10.2c0-3.5 2.3-5.3 4.5-5.3 1.2 0 2.1.8 2.8.8.7 0 1.8-.8 3.1-.8.5 0 2.3.1 3.8 1.4z" fill="#fff"/>
+                        <path d="M15.5 3.5c.7-.8 1.2-2 1-3.2-1 0-2.2.7-2.9 1.5-.6.7-1.2 1.9-1 3.1 1.1.1 2.2-.6 2.9-1.4z" fill="#fff"/>
+                      </svg>
+                    ):(
+                      <svg width="18" height="18" viewBox="0 0 24 24" fill="none">
+                        <path d="M22.56 12.25c0-.78-.07-1.53-.2-2.25H12v4.26h5.92a5.06 5.06 0 01-2.2 3.32v2.77h3.57c2.08-1.92 3.28-4.74 3.28-8.1z" fill="#4285F4"/>
+                        <path d="M12 23c2.97 0 5.46-.98 7.28-2.66l-3.57-2.77c-.98.66-2.23 1.06-3.71 1.06-2.86 0-5.29-1.93-6.16-4.53H2.18v2.84C3.99 20.53 7.7 23 12 23z" fill="#34A853"/>
+                        <path d="M5.84 14.09c-.22-.66-.35-1.36-.35-2.09s.13-1.43.35-2.09V7.07H2.18A10.96 10.96 0 001 12c0 1.77.42 3.45 1.18 4.93l3.66-2.84z" fill="#FBBC05"/>
+                        <path d="M12 5.38c1.62 0 3.06.56 4.21 1.64l3.15-3.15C17.45 2.09 14.97 1 12 1 7.7 1 3.99 3.47 2.18 7.07l3.66 2.84c.87-2.6 3.3-4.53 6.16-4.53z" fill="#EA4335"/>
+                      </svg>
+                    )}
+                    <span style={{fontSize:12,fontWeight:800,color:isApple?"#fff":C.t1,letterSpacing:"0.04em"}}>Add to {walletName}</span>
+                  </button>
+                );
+              })()}
+            </div>
+          </div>
+
+          {/* Activity header */}
+          <div style={{padding:"0 20px 10px"}}><div style={{fontSize:15,fontWeight:800}}>Activity</div></div>
           <div style={{margin:"0 20px",background:C.s1,borderRadius:16,border:`1px solid ${C.s2}`,overflow:"hidden"}}>
             {TX_LIST.map((tx,i)=>(
               <div key={tx.id} onClick={()=>setActiveTx(tx)} style={{display:"flex",alignItems:"center",gap:12,padding:"13px 16px",borderBottom:i<TX_LIST.length-1?`1px solid ${C.s2}`:"none",cursor:"pointer"}}>
@@ -613,11 +951,14 @@ export default function App() {
 
       {tab==="profile"&&(
         <div style={{width:"100%",maxWidth:430,paddingBottom:24}}>
-          <div style={{padding:"20px 20px 16px"}}><div style={{fontSize:20,fontWeight:800,marginBottom:2}}>Profile</div><div style={{fontSize:12,color:C.t3}}>BlueGold · SGC Wallet</div></div>
+          <div style={{padding:"20px 20px 16px"}}><div style={{fontSize:20,fontWeight:800,marginBottom:2}}>Profile</div><div style={{fontSize:12,color:C.t3}}>Aurum · SGC Wallet</div></div>
           <div style={{margin:"0 20px 14px",background:C.s1,border:`1px solid ${C.s2}`,borderRadius:18,padding:"18px"}}>
             <div style={{display:"flex",alignItems:"center",gap:14,marginBottom:14}}>
-              <div style={{width:50,height:50,borderRadius:14,background:`linear-gradient(135deg,${C.goldD},${C.gold})`,display:"flex",alignItems:"center",justifyContent:"center",fontSize:18,fontWeight:800,color:C.t1}}>JW</div>
-              <div><div style={{fontSize:16,fontWeight:700}}>John Warren</div><div style={{fontSize:12,color:C.t3}}>john.bluegold</div></div>
+              {user.picture
+                ? <img src={user.picture} alt="" referrerPolicy="no-referrer" style={{width:50,height:50,borderRadius:14,objectFit:"cover"}} />
+                : <div style={{width:50,height:50,borderRadius:14,background:`linear-gradient(135deg,${C.goldD},${C.gold})`,display:"flex",alignItems:"center",justifyContent:"center",fontSize:18,fontWeight:800,color:C.t1}}>{(user.name||"U").split(" ").map(w=>w[0]).join("").slice(0,2)}</div>
+              }
+              <div><div style={{fontSize:16,fontWeight:700}}>{user.name||"User"}</div><div style={{fontSize:12,color:C.t3}}>{user.email||"—"}</div></div>
               <div style={{marginLeft:"auto",padding:"4px 10px",background:"rgba(26,122,69,0.1)",border:"1px solid rgba(26,122,69,0.2)",borderRadius:20,fontSize:10,fontWeight:700,color:C.green}}>✓ KYC</div>
             </div>
             <div style={{padding:"10px 12px",background:C.s2,borderRadius:10}}>
@@ -635,6 +976,10 @@ export default function App() {
           </div>
           <div style={{margin:"0 20px 14px",background:C.s1,border:`1px solid ${C.s2}`,borderRadius:16,overflow:"hidden"}}>
             <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",padding:"13px 16px",borderBottom:`1px solid ${C.s2}`}}>
+              <div><div style={{fontSize:13,fontWeight:600}}>Dark Mode</div><div style={{fontSize:11,color:C.t3}}>Gold on black aesthetic</div></div>
+              <Toggle on={darkMode} onToggle={toggleDarkMode}/>
+            </div>
+            <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",padding:"13px 16px",borderBottom:`1px solid ${C.s2}`}}>
               <div><div style={{fontSize:13,fontWeight:600}}>Hide Balance</div><div style={{fontSize:11,color:C.t3}}>Mask values on home screen</div></div>
               <Toggle on={hideBalance} onToggle={()=>setHideBalance(v=>!v)}/>
             </div>
@@ -647,6 +992,15 @@ export default function App() {
               </div>
             </div>
           </div>
+          {/* Sign out */}
+          <div style={{margin:"0 20px"}}>
+            <button onClick={handleSignOut} className="tap" style={{
+              width:"100%", padding:"14px", background:C.s1, border:`1px solid ${C.s2}`,
+              borderRadius:14, cursor:"pointer", fontSize:13, fontWeight:700, color:C.red,
+              display:"flex", alignItems:"center", justifyContent:"center", gap:8,
+              transition:"transform 0.15s ease",
+            }}>Sign Out</button>
+          </div>
         </div>
       )}
 
@@ -654,8 +1008,8 @@ export default function App() {
         <div style={{width:"100%",maxWidth:430}}>
           <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",padding:"20px 20px 0",opacity:mounted?1:0,transition:"opacity 0.4s"}}>
             <div style={{display:"flex",alignItems:"center",gap:10}}>
-              <div style={{width:34,height:34,borderRadius:10,background:`linear-gradient(135deg,${C.goldD},${C.gold})`,display:"flex",alignItems:"center",justifyContent:"center",fontSize:14,fontWeight:800,color:C.t1}}>Au</div>
-              <div><div style={{fontSize:15,fontWeight:800,letterSpacing:"-0.02em"}}>BlueGold</div><div style={{fontSize:10,color:C.t3,letterSpacing:"0.08em"}}>STANDARD GOLD COIN</div></div>
+              <div style={{width:34,height:34,borderRadius:10,background:`linear-gradient(135deg,${C.goldD},${C.gold})`,display:"flex",alignItems:"center",justifyContent:"center",fontSize:14,fontWeight:800,color:darkMode?"#0D0D0D":"#1A1710"}}>Au</div>
+              <div><div style={{fontSize:15,fontWeight:800,letterSpacing:"-0.02em"}}>{getGreeting()}, {(user.name||"User").split(" ")[0]}</div><div style={{fontSize:10,color:C.t3,letterSpacing:"0.08em"}}>AURUM</div></div>
             </div>
             <OracleBadge source={source} ageSeconds={ageSeconds} fetching={fetching} progress={progress}/>
           </div>
@@ -705,7 +1059,7 @@ export default function App() {
           </div>
 
           <div style={{display:"flex",gap:10,padding:"20px 20px 0"}}>
-            {[{label:"Buy",icon:"+",gold:true,fn:()=>setBuyOpen(true)},{label:"Send",icon:"↑",gold:false,fn:()=>setSendOpen(true)},{label:"Receive",icon:"↓",gold:false,fn:()=>setReceiveOpen(true)},{label:"Vault",icon:"🏅",gold:false,fn:()=>setVaultOpen(true)}].map(({label,icon,gold,fn})=>(
+            {[{label:"Buy",icon:"+",gold:true,fn:()=>setBuyOpen(true)},{label:"Send",icon:"↑",gold:false,fn:()=>setSendOpen(true)},{label:"Receive",icon:"↓",gold:false,fn:()=>setReceiveOpen(true)},{label:"Vault",icon:"🏅",gold:false,fn:()=>setTab("vault")}].map(({label,icon,gold,fn})=>(
               <button key={label} className="btn" onClick={fn} style={{flex:1,padding:"14px 0",background:gold?`linear-gradient(145deg,${C.goldD},${C.gold})`:C.s1,border:gold?"none":`1px solid ${C.s2}`,borderRadius:14,cursor:"pointer",display:"flex",flexDirection:"column",alignItems:"center",gap:5,boxShadow:gold?"0 4px 20px rgba(212,175,55,0.2)":"none"}}>
                 <span style={{fontSize:17,color:gold?"#1A1710":C.t2,fontWeight:gold?800:400}}>{icon}</span>
                 <span style={{fontSize:10,fontWeight:800,letterSpacing:"0.08em",color:gold?"#1A1710":C.t3,textTransform:"uppercase"}}>{label}</span>
@@ -729,7 +1083,7 @@ export default function App() {
             </div>
           </div>
 
-          <div onClick={()=>setVaultOpen(true)} style={{margin:"8px 20px 0",padding:"11px 16px",background:C.s1,border:`1px solid ${C.s2}`,borderRadius:14,display:"flex",justifyContent:"space-between",alignItems:"center",cursor:"pointer"}}>
+          <div onClick={()=>setTab("vault")} style={{margin:"8px 20px 0",padding:"11px 16px",background:C.s1,border:`1px solid ${C.s2}`,borderRadius:14,display:"flex",justifyContent:"space-between",alignItems:"center",cursor:"pointer"}}>
             <div style={{display:"flex",alignItems:"center",gap:8}}>
               <span>🏅</span>
               <span style={{fontSize:12,color:C.t2,fontWeight:500}}>Brinks Dubai · {fmtGN(HOLDING_G)}g allocated</span>
@@ -738,25 +1092,7 @@ export default function App() {
             <span style={{fontSize:13,color:C.t3}}>›</span>
           </div>
 
-          <div style={{padding:"22px 0 0"}}>
-            <div style={{display:"flex",justifyContent:"space-between",padding:"0 20px 12px",borderBottom:`1px solid ${C.s2}`}}>
-              <span style={{fontSize:16,fontWeight:800}}>Activity</span>
-              <span onClick={()=>setTab("wallet")} style={{fontSize:13,color:C.gold,cursor:"pointer",fontWeight:600}}>See all →</span>
-            </div>
-            {TX_LIST.slice(0,3).map(tx=>(
-              <div key={tx.id} onClick={()=>setActiveTx(tx)} style={{display:"flex",justifyContent:"space-between",alignItems:"center",padding:"13px 20px",cursor:"pointer",borderBottom:`1px solid ${C.s2}`}}>
-                <div style={{display:"flex",alignItems:"center",gap:12}}>
-                  <div style={{width:42,height:42,borderRadius:13,flexShrink:0,background:tx.type==="receive"?"rgba(212,175,55,0.08)":C.s1,border:`1.5px solid ${tx.type==="receive"?"rgba(212,175,55,0.2)":C.s2}`,display:"flex",alignItems:"center",justifyContent:"center",fontSize:17,color:tx.type==="receive"?C.gold:C.t3,fontWeight:700}}>{tx.type==="receive"?"↓":"↑"}</div>
-                  <div><div style={{fontSize:13,fontWeight:600,color:C.t1,marginBottom:2}}>{tx.label}</div><div style={{fontSize:11,color:C.t3}}>{tx.sub}</div></div>
-                </div>
-                <div style={{textAlign:"right"}}>
-                  <div style={{fontFamily:"'DM Mono',monospace",fontSize:13,color:tx.type==="receive"?C.gold:C.t2}}>{tx.type==="receive"?"+":"-"}{fmtOzN(tx.oz)} oz</div>
-                  <div style={{fontSize:11,color:C.t3,marginTop:1}}>{liveOz?fmt(tx.oz*liveOz,cur,rates):"—"}</div>
-                </div>
-              </div>
-            ))}
-          </div>
-
+          {/* ── Holdings (above Activity) ── */}
           <div style={{margin:"16px 20px 0",background:C.s1,borderRadius:18,border:`1px solid ${C.s2}`,overflow:"hidden",opacity:mounted?1:0,transition:"opacity 0.4s ease 0.3s"}}>
             <div style={{padding:"14px 20px",borderBottom:`1px solid ${C.s2}`,display:"flex",justifyContent:"space-between",alignItems:"center"}}>
               <span style={{fontSize:13,fontWeight:800}}>Holdings</span>
@@ -774,22 +1110,191 @@ export default function App() {
               </div>
             )}
             {[{k:"Opened",v:fmt(INITIAL_USD,cur,rates)},{k:"Open price",v:`${fmt(ACCOUNT_OPEN_OZ,cur,rates)}/oz`},{k:"oz held",v:`${fmtOzN(HOLDING_OZ)} oz`},{k:"Current value",v:loading?"—":hideBalance?"••••":fmt(portValue,cur,rates),gold:true},{k:"Total return",v:loading?"—":hideBalance?"••••":(portChange>=0?"+":"")+fmt(portChange,cur,rates),gold:true}].map(({k,v,gold})=>(
-              <div key={k} style={{display:"flex",justifyContent:"space-between",padding:"11px 20px",borderBottom:`1px solid ${C.s2}`}}>
+              <div key={k} className="tap" style={{display:"flex",justifyContent:"space-between",padding:"11px 20px",borderBottom:`1px solid ${C.s2}`,transition:"transform 0.15s ease"}}>
                 <span style={{fontSize:12,color:C.t3}}>{k}</span>
                 <span style={{fontFamily:"'DM Mono',monospace",fontSize:12,color:gold?C.gold:C.t2,fontWeight:gold?600:400}}>{v}</span>
               </div>
             ))}
           </div>
+
+          {/* ── Activity ── */}
+          <div style={{padding:"22px 0 0"}}>
+            <div style={{display:"flex",justifyContent:"space-between",padding:"0 20px 12px",borderBottom:`1px solid ${C.s2}`}}>
+              <span style={{fontSize:16,fontWeight:800}}>Activity</span>
+              <span onClick={()=>setTab("wallet")} style={{fontSize:13,color:C.gold,cursor:"pointer",fontWeight:600}}>See all →</span>
+            </div>
+            {TX_LIST.slice(0,3).map(tx=>(
+              <div key={tx.id} onClick={()=>setActiveTx(tx)} className="tap" style={{display:"flex",justifyContent:"space-between",alignItems:"center",padding:"13px 20px",cursor:"pointer",borderBottom:`1px solid ${C.s2}`,transition:"transform 0.15s ease"}}>
+                <div style={{display:"flex",alignItems:"center",gap:12}}>
+                  <div style={{width:42,height:42,borderRadius:13,flexShrink:0,background:tx.type==="receive"?"rgba(212,175,55,0.08)":C.s1,border:`1.5px solid ${tx.type==="receive"?"rgba(212,175,55,0.2)":C.s2}`,display:"flex",alignItems:"center",justifyContent:"center",fontSize:17,color:tx.type==="receive"?C.gold:C.t3,fontWeight:700}}>{tx.type==="receive"?"↓":"↑"}</div>
+                  <div><div style={{fontSize:13,fontWeight:600,color:C.t1,marginBottom:2}}>{tx.label}</div><div style={{fontSize:11,color:C.t3}}>{tx.sub}</div></div>
+                </div>
+                <div style={{textAlign:"right"}}>
+                  <div style={{fontFamily:"'DM Mono',monospace",fontSize:13,color:tx.type==="receive"?C.gold:C.t2}}>{tx.type==="receive"?"+":"-"}{fmtOzN(tx.oz)} oz</div>
+                  <div style={{fontSize:11,color:C.t3,marginTop:1}}>{liveOz?fmt(tx.oz*liveOz,cur,rates):"—"}</div>
+                </div>
+              </div>
+            ))}
+          </div>
+
+          {/* ── Backed by gold footer badge ── */}
+          <div style={{margin:"16px 20px 0",padding:"10px 16px",background:C.s1,border:`1px solid ${C.s2}`,borderRadius:12,display:"flex",alignItems:"center",justifyContent:"center",gap:8}}>
+            <span style={{fontSize:11,color:C.t3,fontWeight:500}}>Backed by <span style={{color:C.gold,fontWeight:700}}>{fmtGN(HOLDING_G)}g</span> physical gold · Brinks Dubai</span>
+          </div>
         </div>
       )}
 
-      <div style={{position:"fixed",bottom:0,left:0,right:0,background:"rgba(255,255,255,0.97)",backdropFilter:"blur(20px)",borderTop:`1px solid ${C.s2}`,display:"flex",justifyContent:"center",zIndex:100}}>
+      {/* ── Vault Tab ── */}
+      {tab==="vault"&&(
+        <div style={{width:"100%",maxWidth:430,paddingBottom:24}}>
+          <div style={{padding:"20px 20px 0",marginBottom:16}}><div style={{fontSize:20,fontWeight:800,marginBottom:2}}>Vault</div><div style={{fontSize:12,color:C.t3}}>Brinks Dubai · Allocated Storage</div></div>
+
+          {/* Summary card */}
+          <div style={{margin:"0 20px 16px",padding:"18px",background:C.s1,border:`1px solid ${C.s2}`,borderRadius:16}}>
+            <div style={{display:"flex",justifyContent:"space-between",alignItems:"flex-start",marginBottom:14}}>
+              <div>
+                <div style={{fontSize:10,color:C.t3,textTransform:"uppercase",letterSpacing:"0.1em",fontWeight:700,marginBottom:4}}>Total Gold</div>
+                <div style={{fontFamily:"'DM Mono',monospace",fontSize:22,fontWeight:300,color:C.gold}}>{fmtGN(VAULT_TOTAL_G)}g</div>
+                <div style={{fontSize:11,color:C.t3,marginTop:3}}>{fmtOzN(VAULT_TOTAL_G/TROY)} oz · {liveOz?fmt((VAULT_TOTAL_G/TROY)*liveOz,cur,rates):"—"}</div>
+              </div>
+              <div style={{padding:"4px 10px",background:"rgba(46,204,113,0.1)",border:"1px solid rgba(46,204,113,0.2)",borderRadius:20,fontSize:10,fontWeight:700,color:C.green}}>✓ ALLOCATED</div>
+            </div>
+            <div style={{display:"flex",gap:8}}>
+              <button className="tap" onClick={()=>setBuyOpen(true)} style={{flex:1,padding:"11px 0",background:`linear-gradient(135deg,${C.goldD},${C.gold})`,border:"none",borderRadius:10,cursor:"pointer",fontSize:12,fontWeight:800,color:darkMode?"#0D0D0D":"#1A1710",display:"flex",alignItems:"center",justifyContent:"center",gap:5,transition:"transform 0.15s ease"}}>Buy Gold</button>
+              <button className="tap" onClick={()=>setVaultSellOpen(true)} style={{flex:1,padding:"11px 0",background:C.s1,border:`1.5px solid ${C.s2}`,borderRadius:10,cursor:"pointer",fontSize:12,fontWeight:800,color:C.t2,display:"flex",alignItems:"center",justifyContent:"center",gap:5,transition:"transform 0.15s ease"}}>Sell Gold</button>
+            </div>
+          </div>
+
+          {/* Bars list */}
+          <div style={{padding:"0 20px 10px"}}><div style={{fontSize:15,fontWeight:800}}>Your Bars ({VAULT_BARS.length})</div></div>
+          {VAULT_BARS.map((bar,i)=>{
+            const pct=(bar.allocated/bar.weight*100).toFixed(1);
+            return(
+              <div key={bar.serial} className="tap" onClick={()=>setVaultDetail(i)} style={{margin:"0 20px 10px",background:C.s1,border:`1px solid ${C.s2}`,borderRadius:16,overflow:"hidden",cursor:"pointer",transition:"transform 0.15s ease"}}>
+                <div style={{padding:"14px 16px",display:"flex",alignItems:"center",gap:12}}>
+                  {/* Gold bar icon */}
+                  <div style={{width:44,height:44,borderRadius:12,background:"linear-gradient(135deg,rgba(212,175,55,0.12),rgba(184,150,46,0.06))",border:`1.5px solid rgba(212,175,55,0.2)`,display:"flex",alignItems:"center",justifyContent:"center",flexShrink:0}}>
+                    <div style={{width:24,height:16,borderRadius:3,background:"linear-gradient(135deg,#c8a84b,#d4af37,#b8962e)",boxShadow:"inset 0 1px 2px rgba(255,255,255,0.3)"}} />
+                  </div>
+                  <div style={{flex:1,minWidth:0}}>
+                    <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:3}}>
+                      <span style={{fontSize:13,fontWeight:700}}>Bar {i+1} · {bar.refinery}</span>
+                      <span style={{fontFamily:"'DM Mono',monospace",fontSize:12,color:C.gold,fontWeight:600}}>{fmtGN(bar.allocated)}g</span>
+                    </div>
+                    <div style={{display:"flex",justifyContent:"space-between",alignItems:"center"}}>
+                      <span style={{fontFamily:"'DM Mono',monospace",fontSize:10,color:C.t3}}>{bar.serial}</span>
+                      <span style={{fontSize:10,color:C.t3}}>{liveOz?fmt((bar.allocated/TROY)*liveOz,cur,rates):"—"}</span>
+                    </div>
+                    {/* Allocation bar */}
+                    <div style={{marginTop:6,height:3,background:C.s2,borderRadius:2,overflow:"hidden"}}>
+                      <div style={{width:`${pct}%`,height:"100%",background:`linear-gradient(90deg,${C.goldD},${C.gold})`,borderRadius:2}} />
+                    </div>
+                    <div style={{marginTop:3,fontSize:9,color:C.t3}}>{pct}% of {fmtGN(bar.weight)}g bar · {bar.purity} LBMA · Minted {bar.mintDate}</div>
+                  </div>
+                </div>
+              </div>
+            );
+          })}
+
+          {/* Chainlink oracle footer */}
+          <div style={{margin:"6px 20px 0",padding:"12px 14px",background:"rgba(55,114,255,0.06)",border:"1px solid rgba(55,114,255,0.18)",borderRadius:12}}>
+            <div style={{fontSize:11,fontWeight:700,color:"#3772ff",marginBottom:4}}>⬡ Chainlink XAU/USD · Ethereum Mainnet</div>
+            <div style={{fontFamily:"'DM Mono',monospace",fontSize:9,color:C.t3,wordBreak:"break-all"}}>{CL_XAU}</div>
+          </div>
+        </div>
+      )}
+
+      {/* ── Sell Gold Modal ── */}
+      {vaultSellOpen&&(
+        <div style={{position:"fixed",inset:0,zIndex:200,background:"rgba(26,23,16,0.55)",backdropFilter:"blur(12px)",display:"flex",alignItems:"flex-end",justifyContent:"center"}} onClick={e=>e.target===e.currentTarget&&setVaultSellOpen(false)}>
+          <div style={{width:"100%",maxWidth:430,background:C.s1,borderTop:`2px solid ${C.gold}`,borderRadius:"22px 22px 0 0",padding:"0 24px 48px",animation:"slideUp 0.28s cubic-bezier(0.22,1,0.36,1)"}}>
+            <div style={{display:"flex",justifyContent:"center",padding:"14px 0 20px"}}><div style={{width:40,height:4,borderRadius:2,background:C.s2}}/></div>
+            <div style={{display:"flex",alignItems:"center",gap:12,marginBottom:20,paddingBottom:16,borderBottom:`1px solid ${C.s2}`}}>
+              <div style={{width:44,height:44,borderRadius:12,background:"rgba(192,57,43,0.1)",display:"flex",alignItems:"center",justifyContent:"center",fontSize:20,color:C.red}}>↓</div>
+              <div><div style={{fontSize:17,fontWeight:700}}>Sell Gold</div><div style={{fontSize:12,color:C.t3}}>Select a bar and amount to sell</div></div>
+              <button onClick={()=>setVaultSellOpen(false)} style={{marginLeft:"auto",background:"none",border:"none",fontSize:18,color:C.t3,cursor:"pointer"}}>✕</button>
+            </div>
+            <div style={{fontSize:10,color:C.t3,textTransform:"uppercase",fontWeight:700,marginBottom:8}}>Select Bar</div>
+            <div style={{display:"flex",gap:8,marginBottom:16,overflowX:"auto"}}>
+              {VAULT_BARS.map((b,i)=>(
+                <button key={i} onClick={()=>setSellBarIdx(i)} className="tap" style={{minWidth:100,padding:"10px",background:sellBarIdx===i?"rgba(212,175,55,0.1)":C.s1,border:`1.5px solid ${sellBarIdx===i?C.gold:C.s2}`,borderRadius:12,cursor:"pointer",textAlign:"left",flexShrink:0,transition:"transform 0.15s ease"}}>
+                  <div style={{fontSize:9,color:sellBarIdx===i?C.gold:C.t3,fontWeight:700,marginBottom:2}}>BAR {i+1}</div>
+                  <div style={{fontFamily:"'DM Mono',monospace",fontSize:9,color:C.t3}}>{b.serial.slice(-8)}</div>
+                  <div style={{fontSize:11,fontWeight:600,color:sellBarIdx===i?C.gold:C.t2,marginTop:2}}>{fmtGN(b.allocated)}g</div>
+                  <div style={{fontSize:9,color:C.t3,marginTop:1}}>{liveOz?fmt((b.allocated/TROY)*liveOz,cur,rates):"—"}</div>
+                </button>
+              ))}
+            </div>
+            <div style={{fontSize:10,color:C.t3,textTransform:"uppercase",fontWeight:700,marginBottom:7}}>Amount to sell (grams)</div>
+            <div style={{position:"relative",marginBottom:12}}>
+              <input type="number" value={sellAmt} onChange={e=>setSellAmt(e.target.value)} placeholder="0"
+                style={{width:"100%",boxSizing:"border-box",padding:"14px 40px 14px 13px",background:C.s1,border:`1.5px solid ${C.s2}`,borderRadius:12,color:C.t1,fontFamily:"'DM Mono',monospace",fontSize:22,fontWeight:300,outline:"none"}}/>
+              <div style={{position:"absolute",right:13,top:"50%",transform:"translateY(-50%)",fontSize:12,color:C.t3,fontWeight:700}}>g</div>
+            </div>
+            <div style={{display:"flex",gap:6,marginBottom:16}}>
+              {["25%","50%","100%"].map(p=>{
+                const frac=parseInt(p)/100;
+                return <button key={p} onClick={()=>setSellAmt((VAULT_BARS[sellBarIdx].allocated*frac).toFixed(4))} style={{padding:"5px 12px",background:C.s1,border:`1px solid ${C.s2}`,borderRadius:8,cursor:"pointer",fontSize:10,fontWeight:700,color:C.t3}}>{p}</button>;
+              })}
+            </div>
+            {parseFloat(sellAmt)>0&&<div style={{padding:"10px 14px",background:"rgba(212,175,55,0.06)",border:`1px solid rgba(212,175,55,0.15)`,borderRadius:10,marginBottom:16,fontSize:11,color:C.t2}}>
+              You will receive <span style={{color:C.gold,fontWeight:700}}>{liveOz?fmt((parseFloat(sellAmt)/TROY)*liveOz,cur,rates):"—"}</span> for <span style={{fontWeight:600}}>{sellAmt}g</span> from Bar {sellBarIdx+1}
+            </div>}
+            <button onClick={()=>{alert(`Sell order submitted: ${sellAmt}g from Bar ${sellBarIdx+1} (${VAULT_BARS[sellBarIdx].serial})`);setVaultSellOpen(false);setSellAmt("");}} disabled={!parseFloat(sellAmt)||parseFloat(sellAmt)>VAULT_BARS[sellBarIdx].allocated} className="tap" style={{
+              width:"100%",padding:"15px",background:parseFloat(sellAmt)&&parseFloat(sellAmt)<=VAULT_BARS[sellBarIdx].allocated?`linear-gradient(135deg,${C.goldD},${C.gold})`:C.s2,
+              border:"none",borderRadius:14,cursor:parseFloat(sellAmt)?"pointer":"default",fontSize:14,fontWeight:800,
+              color:parseFloat(sellAmt)&&parseFloat(sellAmt)<=VAULT_BARS[sellBarIdx].allocated?(darkMode?"#0D0D0D":"#1A1710"):C.t3,transition:"transform 0.15s ease",
+            }}>Sell Gold</button>
+          </div>
+        </div>
+      )}
+
+      {/* ── Bar Detail Modal ── */}
+      {vaultDetail!==null&&(()=>{
+        const bar=VAULT_BARS[vaultDetail];
+        const pct=(bar.allocated/bar.weight*100).toFixed(2);
+        return(
+          <div style={{position:"fixed",inset:0,zIndex:200,background:"rgba(26,23,16,0.55)",backdropFilter:"blur(12px)",display:"flex",alignItems:"flex-end",justifyContent:"center"}} onClick={e=>e.target===e.currentTarget&&setVaultDetail(null)}>
+            <div style={{width:"100%",maxWidth:430,background:C.s1,borderTop:`2px solid ${C.gold}`,borderRadius:"22px 22px 0 0",maxHeight:"80vh",display:"flex",flexDirection:"column",animation:"slideUp 0.28s cubic-bezier(0.22,1,0.36,1)"}}>
+              <div style={{padding:"16px 22px",borderBottom:`1px solid ${C.s2}`,display:"flex",alignItems:"center",gap:12,flexShrink:0}}>
+                <div style={{width:36,height:24,borderRadius:4,background:"linear-gradient(135deg,#c8a84b,#d4af37,#b8962e)",boxShadow:"inset 0 1px 2px rgba(255,255,255,0.3)"}} />
+                <div style={{flex:1}}><div style={{fontSize:16,fontWeight:700}}>Bar {vaultDetail+1} · {bar.refinery}</div><div style={{fontSize:11,color:C.t3}}>{bar.serial}</div></div>
+                <button onClick={()=>setVaultDetail(null)} style={{background:"none",border:"none",fontSize:18,color:C.t3,cursor:"pointer"}}>✕</button>
+              </div>
+              <div style={{flex:1,overflowY:"auto",padding:"16px 20px 40px"}}>
+                <div style={{background:C.s1,border:`1px solid ${C.s2}`,borderRadius:14,overflow:"hidden",marginBottom:14}}>
+                  <div style={{padding:"14px",background:"linear-gradient(135deg,rgba(212,175,55,0.08),rgba(184,150,46,0.04))",borderBottom:`1px solid ${C.s2}`,textAlign:"center"}}>
+                    <div style={{display:"inline-block",padding:"10px 20px",background:"linear-gradient(135deg,#c8a84b,#d4af37,#b8962e)",borderRadius:8,marginBottom:8}}>
+                      <div style={{fontFamily:"'DM Mono',monospace",fontSize:9,color:"rgba(0,0,0,0.5)",marginBottom:3}}>FINE GOLD {bar.purity}</div>
+                      <div style={{fontFamily:"'DM Mono',monospace",fontSize:13,fontWeight:700,color:"rgba(0,0,0,0.8)"}}>{bar.weight.toFixed(3)}g</div>
+                      <div style={{fontFamily:"'DM Mono',monospace",fontSize:8,color:"rgba(0,0,0,0.5)",marginTop:3}}>{bar.refinery.toUpperCase()}</div>
+                    </div>
+                    <div style={{height:4,background:C.s2,borderRadius:2,overflow:"hidden",marginBottom:4}}>
+                      <div style={{width:`${pct}%`,height:"100%",background:`linear-gradient(90deg,${C.goldD},${C.gold})`}}/>
+                    </div>
+                    <div style={{fontSize:11,color:C.t3}}>Your share: <span style={{color:C.gold,fontWeight:700}}>{fmtGN(bar.allocated)}g</span> / {fmtGN(bar.weight)}g ({pct}%)</div>
+                  </div>
+                  {[{k:"Serial",v:bar.serial},{k:"Refinery",v:bar.refinery},{k:"Purity",v:`${bar.purity} LBMA`},{k:"Mint date",v:bar.mintDate},{k:"Location",v:bar.location},{k:"Live value",v:liveOz?fmt((bar.allocated/TROY)*liveOz,cur,rates):"—",gold:true}].map(({k,v,gold},i,a)=>(
+                    <div key={k} style={{display:"flex",justifyContent:"space-between",padding:"10px 14px",borderBottom:i<a.length-1?`1px solid ${C.s2}`:"none"}}>
+                      <span style={{fontSize:11,color:C.t3}}>{k}</span>
+                      <span style={{fontSize:11,color:gold?C.gold:C.t2,fontWeight:gold?600:400}}>{v}</span>
+                    </div>
+                  ))}
+                </div>
+                <div style={{display:"flex",gap:8}}>
+                  <button className="tap" onClick={()=>{setVaultDetail(null);setBuyOpen(true);}} style={{flex:1,padding:"13px 0",background:`linear-gradient(135deg,${C.goldD},${C.gold})`,border:"none",borderRadius:12,cursor:"pointer",fontSize:12,fontWeight:800,color:darkMode?"#0D0D0D":"#1A1710",transition:"transform 0.15s ease"}}>Buy More</button>
+                  <button className="tap" onClick={()=>{setVaultDetail(null);setSellBarIdx(vaultDetail);setVaultSellOpen(true);}} style={{flex:1,padding:"13px 0",background:C.s1,border:`1.5px solid ${C.s2}`,borderRadius:12,cursor:"pointer",fontSize:12,fontWeight:800,color:C.t2,transition:"transform 0.15s ease"}}>Sell This Bar</button>
+                </div>
+              </div>
+            </div>
+          </div>
+        );
+      })()}
+
+      <div style={{position:"fixed",bottom:0,left:0,right:0,background:C.navBg,backdropFilter:"blur(20px)",borderTop:`1px solid ${C.s2}`,display:"flex",justifyContent:"center",zIndex:100,transition:"background 0.3s ease"}}>
         <div style={{width:"100%",maxWidth:430,display:"flex"}}>
           {nav.map(({id,label,svg})=>(
-            <button key={id} onClick={()=>{
-              if(id==="vault") setVaultOpen(true);
-              else setTab(id);
-            }} style={{flex:1,padding:"13px 0 11px",background:"none",border:"none",cursor:"pointer",display:"flex",flexDirection:"column",alignItems:"center",gap:4,position:"relative"}}>
+            <button key={id} onClick={()=>setTab(id)} className="tap" style={{flex:1,padding:"13px 0 11px",background:"none",border:"none",cursor:"pointer",display:"flex",flexDirection:"column",alignItems:"center",gap:4,position:"relative",transition:"transform 0.15s ease"}}>
               {tab===id&&<div style={{position:"absolute",top:0,left:"50%",transform:"translateX(-50%)",width:32,height:3,borderRadius:2,background:`linear-gradient(90deg,${C.goldD},${C.gold})`}}/>}
               {svg(tab===id?C.gold:C.t3)}
               <span style={{fontSize:9,fontWeight:800,letterSpacing:"0.08em",textTransform:"uppercase",color:tab===id?C.gold:C.t3}}>{label}</span>
@@ -799,7 +1304,6 @@ export default function App() {
       </div>
 
       {activeTx&&<TxDetail tx={activeTx} liveOz={liveOz||0} cur={cur} rates={rates} onClose={()=>setActiveTx(null)}/>}
-      {vaultOpen&&<VaultSheet liveOz={liveOz||0} cur={cur} rates={rates} onClose={()=>setVaultOpen(false)}/>}
       {sendOpen&&<SendModal liveOz={liveOz||0} cur={cur} rates={rates} onClose={()=>setSendOpen(false)}/>}
       {buyOpen&&<BuyModal liveOz={liveOz||0} cur={cur} rates={rates} onClose={()=>setBuyOpen(false)}/>}
       {receiveOpen&&<ReceiveModal liveOz={liveOz||0} cur={cur} rates={rates} onClose={()=>setReceiveOpen(false)}/>}
